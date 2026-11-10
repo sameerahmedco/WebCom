@@ -1,0 +1,52 @@
+name: Windows build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x64:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    env:
+      WEBCOM_UI_CAPTURE_DIR: ${{ github.workspace }}/build/windows-ui-captures
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Build, run portable and native Windows UI tests, and package
+        shell: powershell
+        run: .\scripts\Build.ps1 -Configuration Release -Architecture x64
+      - name: Upload Windows UI captures and test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: WebCom-Windows-test-evidence
+          path: |
+            build/windows-ui-captures/
+            build/**/Testing/Temporary/LastTest.log
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload portable Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: WebCom-Windows-x64
+          path: dist/WebCom-Windows-x64.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  portable-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build/core -DWEBCOM_BUILD_APP=OFF -DBUILD_TESTING=ON
+      - name: Build
+        run: cmake --build build/core --parallel
+      - name: Test
+        run: ctest --test-dir build/core --output-on-failure

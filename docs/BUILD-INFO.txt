@@ -1,0 +1,7 @@
+WebCom for Windows 0.5.1 source preview
+
+Windows baseline: the user confirmed the 0.4.7.4 lineage compiles successfully with MSVC; later source milestones preserve those build fixes.
+0.5.1 adds current-site cookie visibility/clearing, HTTPS/HTTP/certificate status in site information, and supported WebView2-backed profile deletion with WebCom metadata cleanup.
+Portable validation: GCC + Clang, 10/10 suites, 605 checks, 0 failures, 0 warnings.
+A 0.5.1 Windows executable was not built in this Linux environment.
+See docs/VALIDATION-0.5.1.md and docs/CHANGES-0.5.1.md.

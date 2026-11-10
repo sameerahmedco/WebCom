@@ -1,0 +1,10 @@
+/build/
+/dist/
+/.deps/
+/.vs/
+*.user
+*.suo
+*.pdb
+*.ilk
+*.obj
+*.log
