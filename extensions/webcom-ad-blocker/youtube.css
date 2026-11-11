@@ -1,0 +1,9 @@
+ytd-ad-slot-renderer,
+ytd-display-ad-renderer,
+ytd-in-feed-ad-layout-renderer,
+ytd-promoted-sparkles-web-renderer,
+ytd-promoted-sparkles-text-search-renderer,
+ytd-action-companion-ad-renderer,
+ytm-promoted-sparkles-web-renderer {
+  display: none !important;
+}

@@ -118,6 +118,12 @@ try {
     foreach ($binaryName in @('WebCom.exe', 'WebView2Loader.dll')) {
         Copy-Item -LiteralPath (Join-Path $buildDirectory $binaryName) -Destination $packageDirectory -Force
     }
+    $adBlockerSource = Join-Path $repositoryRoot 'extensions\webcom-ad-blocker'
+    $adBlockerDestination = Join-Path $packageDirectory 'extensions\webcom-ad-blocker'
+    New-Item -ItemType Directory -Path $adBlockerDestination -Force | Out-Null
+    foreach ($extensionFile in Get-ChildItem -LiteralPath $adBlockerSource -File) {
+        Copy-Item -LiteralPath $extensionFile.FullName -Destination $adBlockerDestination -Force
+    }
     $uiTestBinary = Join-Path $buildDirectory 'WebCom-ui-tests.exe'
     if (Test-Path -LiteralPath $uiTestBinary) { Copy-Item -LiteralPath $uiTestBinary -Destination $packageDirectory -Force }
     foreach ($licenseName in @('LICENSE', 'NOTICE')) {

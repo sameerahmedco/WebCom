@@ -113,6 +113,12 @@ WebCom uses the **Microsoft Edge WebView2 Runtime** to render web content. WebCo
 
 Unpacked extensions are supported through WebView2's extension APIs where the runtime supports their behavior. Direct Chrome Web Store installation, Chrome Sync, and browser-owned Chrome toolbar/popup UI are not emulated.
 
+### WebCom Ad Blocker
+
+Ad blocking turns on automatically when a normal profile opens its first web page. WebCom keeps the bundled files in its writable application-data folder. Open **Extensions → WebCom Ad Blocker → Turn off / Turn on** to change the setting for that profile, then reload open pages. The choice survives restarts and bundled blocker updates. Incognito uses its separate WebView2 context and currently has no bundled blocker.
+
+The extension blocks requests to common ad networks and hides common ad slots. On YouTube it also filters player ad data and presses the player's skip button when one becomes available. YouTube playback and coverage can vary as the site changes. The Extensions page lets you disable the blocker if a site breaks.
+
 ## Project status
 
 **WebCom v2 is currently a public-beta codebase.** Before broad distribution, validate the browser on real Windows hardware for navigation, profile isolation, accessibility, signed update/rollback behavior, downloads, permissions, password/autofill UX, DPI scaling, extension behavior, and memory use.

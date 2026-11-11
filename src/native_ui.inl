@@ -1011,7 +1011,7 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
                 const int text_right=static_cast<int>(row.right)-D(18);
                 Text(dc,extension.name,{row.left+D(18),row.top+D(8),text_right,row.top+D(35)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
                 const std::wstring state=extension.enabled?L"Enabled":L"Disabled";
-                std::wstring source_state=L"  •  source not recorded";
+                std::wstring source_state=extension.id==ad_blocker_id_ ? L"  •  Built into WebCom" : L"  •  source not recorded";
                 bool source_needs_attention=false;
                 if(source_index>=0 && static_cast<std::size_t>(source_index)<extension_source_health_.size()){
                     const auto& health=extension_source_health_[static_cast<std::size_t>(source_index)];
@@ -1032,10 +1032,10 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
                     if(enabled)add_action(button,command);
                 };
                 draw_extension_button(ExtensionDetailsBase+static_cast<UINT>(i),L"Details",92);
-                draw_extension_button(ExtensionToggleBase+static_cast<UINT>(i),extension.enabled?L"Disable":L"Enable",92);
+                draw_extension_button(ExtensionToggleBase+static_cast<UINT>(i),extension.id==ad_blocker_id_ ? (extension.enabled?L"Turn off":L"Turn on") : (extension.enabled?L"Disable":L"Enable"),92,!extension_toggle_pending_);
                 if(source_index>=0)draw_extension_button(ExtensionReloadBase+static_cast<UINT>(source_index),L"Reload",92);
                 if(source_index>=0)draw_extension_button(ExtensionOpenFolderBase+static_cast<UINT>(source_index),L"Open folder",110);
-                draw_extension_button(ExtensionRemoveBase+static_cast<UINT>(i),L"Remove",92);
+                if(extension.id!=ad_blocker_id_)draw_extension_button(ExtensionRemoveBase+static_cast<UINT>(i),L"Remove",92);
                 y=static_cast<int>(row.bottom)+D(10);
             }
         }
