@@ -41,6 +41,7 @@ VersionInfoProductVersion={#AppVersion}
 [Files]
 Source: "{#SourceDir}\WebCom.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\WebView2Loader.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\extensions\webcom-ad-blocker\*"; DestDir: "{app}\extensions\webcom-ad-blocker"; Flags: ignoreversion
 
 [Registry]
 ; Register WebCom as a candidate for Windows Default Apps. The installer does

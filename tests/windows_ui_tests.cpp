@@ -7,6 +7,7 @@
 #include "storage.h"
 #include <commctrl.h>
 #include <dwmapi.h>
+#include <oleacc.h>
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -177,7 +178,18 @@ HWND SuggestionPanel(HWND owner) {
 HWND TabStrip(HWND owner) {
     HWND result = nullptr;
     EnumChildWindows(owner, [](HWND child, LPARAM data) -> BOOL {
-        if (WindowText(child).starts_with(L"Tabs:")) {
+        IAccessible* accessible = nullptr;
+        if (FAILED(AccessibleObjectFromWindow(child, OBJID_CLIENT, IID_IAccessible,
+                                             reinterpret_cast<void**>(&accessible))) || !accessible) return TRUE;
+        VARIANT self{};
+        self.vt = VT_I4;
+        self.lVal = CHILDID_SELF;
+        VARIANT role{};
+        const HRESULT status = accessible->get_accRole(self, &role);
+        const bool is_tab_strip = SUCCEEDED(status) && role.vt == VT_I4 && role.lVal == ROLE_SYSTEM_PAGETABLIST;
+        VariantClear(&role);
+        accessible->Release();
+        if (is_tab_strip) {
             *reinterpret_cast<HWND*>(data) = child; return FALSE;
         }
         return TRUE;

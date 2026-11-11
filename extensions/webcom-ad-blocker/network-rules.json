@@ -1,0 +1,59 @@
+[
+  {
+    "id": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "requestDomains": [
+        "adform.net",
+        "adnxs.com",
+        "adsrvr.org",
+        "amazon-adsystem.com",
+        "casalemedia.com",
+        "criteo.com",
+        "criteo.net",
+        "doubleclick.net",
+        "googleadservices.com",
+        "googlesyndication.com",
+        "openx.net",
+        "pubmatic.com",
+        "rubiconproject.com",
+        "smartadserver.com",
+        "taboola.com"
+      ],
+      "domainType": "thirdParty",
+      "excludedResourceTypes": ["main_frame"]
+    }
+  },
+  {
+    "id": 2,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||youtube.com/pagead/",
+      "excludedResourceTypes": ["main_frame"]
+    }
+  },
+  {
+    "id": 3,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||youtube.com/api/stats/ads^",
+      "excludedResourceTypes": ["main_frame"]
+    }
+  },
+  {
+    "id": 4,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||youtube.com/get_midroll_info^",
+      "excludedResourceTypes": ["main_frame"]
+    }
+  },
+  {
+    "id": 5,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||youtube-nocookie.com/pagead/",
+      "excludedResourceTypes": ["main_frame"]
+    }
+  }
+]

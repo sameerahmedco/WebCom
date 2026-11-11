@@ -927,6 +927,12 @@ private:
     UpdateRetryState update_retry_{};
     std::optional<RecoveryPackage> recovery_package_;
     ComPtr<ICoreWebView2Profile> extension_profile_;
+    bool ad_blocker_starting_ = false;
+    bool ad_blocker_ready_ = false;
+    bool extension_toggle_pending_ = false;
+    std::uint64_t ad_blocker_generation_ = 0;
+    std::wstring ad_blocker_id_;
+    std::vector<std::function<void()>> ad_blocker_waiters_;
     std::vector<ExtensionEntry> extensions_;
     std::vector<ExtensionSourceRecord> extension_sources_;
     std::vector<ExtensionSourceHealth> extension_source_health_;
@@ -1111,6 +1117,9 @@ private:
     void ClearAllSiteDataFromPrivacy();
     void EnsureExtensionProfile();
     void CaptureExtensionProfile(Tab& tab);
+    void EnsureAdBlocker(std::function<void()> resume);
+    std::filesystem::path AdBlockerDisabledPath() const;
+    bool SaveAdBlockerEnabled(bool enabled);
     void RefreshExtensions();
     void RefreshExtensionSourceHealth();
     void LoadUnpackedExtension();
@@ -2319,6 +2328,8 @@ void BrowserApp::Impl::Navigate(std::wstring input) {
         if (InternalPageFor(tab->url) == InternalPage::Extensions) EnsureExtensionProfile();
         if (IsHome(tab->url)) FocusOmnibox();
         else if (tab_strip_) SetFocus(tab_strip_);
+    } else if (tab->web && tab->creating) {
+        UpdateUI(true);
     } else if (tab->web) {
         ComPtr<ICoreWebView2_3> lifecycle;
         if (SUCCEEDED(tab->web.As(&lifecycle))) lifecycle->Resume();
@@ -2499,25 +2510,34 @@ void BrowserApp::Impl::Ensure(Tab& tab) {
                 return S_OK;
             }
             app->CaptureExtensionProfile(*current);
-            app->Attach(*current);
-            app->SetVisible(*current, app->IsSplitVisible(*current));
-            current->restore_pending = false;
-            if (app->delete_profile_pending_ && !current->private_mode) {
-                app->DeleteCurrentProfileNow(*current);
-                return S_OK;
-            }
-            if (current->popup_args) {
-                current->popup_args->put_NewWindow(current->web.Get());
-                current->popup_args->put_Handled(TRUE);
-                current->popup_deferral->Complete();
-                current->popup_args.Reset(); current->popup_deferral.Reset();
-            } else {
-                const HRESULT navigation = current->web->Navigate(current->url.c_str());
-                if (FAILED(navigation)) app->Note(L"Navigation failed. Check the address and press Reload.");
-            }
-            if (app->IsActive(*current) && !app->address_editing_ && !app->menu_open_ && GetCapture()!=app->tab_strip_)
-                current->controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
-            app->UpdateUI(app->IsActive(*current) && !app->address_editing_ && !app->menu_open_);
+            current->creating = true;
+            const auto resume = [weak, id, generation]() {
+                auto app = weak.lock();
+                auto* current = app ? app->Find(id) : nullptr;
+                if (!app || app->closing_ || !current || current->generation != generation || !current->web) return;
+                current->creating = false;
+                app->Attach(*current);
+                app->SetVisible(*current, app->IsSplitVisible(*current));
+                current->restore_pending = false;
+                if (app->delete_profile_pending_ && !current->private_mode) {
+                    app->DeleteCurrentProfileNow(*current);
+                    return;
+                }
+                if (current->popup_args) {
+                    current->popup_args->put_NewWindow(current->web.Get());
+                    current->popup_args->put_Handled(TRUE);
+                    current->popup_deferral->Complete();
+                    current->popup_args.Reset(); current->popup_deferral.Reset();
+                } else {
+                    const HRESULT navigation = current->web->Navigate(current->url.c_str());
+                    if (FAILED(navigation)) app->Note(L"Navigation failed. Check the address and press Reload.");
+                }
+                if (app->IsActive(*current) && !app->address_editing_ && !app->menu_open_ && GetCapture()!=app->tab_strip_)
+                    current->controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+                app->UpdateUI(app->IsActive(*current) && !app->address_editing_ && !app->menu_open_);
+            };
+            if (current->private_mode || app->delete_profile_pending_) resume();
+            else app->EnsureAdBlocker(resume);
             return S_OK;
         });
     hr = profiles->CreateCoreWebView2ControllerWithOptions(window_, options.Get(), callback.Get());
@@ -4285,6 +4305,80 @@ void BrowserApp::Impl::UpdateChannelMenuPopup() {
     else if(selected==UpdateChannelBeta)SetUpdateChannel(ReleaseChannel::Beta);
 }
 
+std::filesystem::path BrowserApp::Impl::AdBlockerDisabledPath() const {
+    return root_ / L"BundledExtensions" / Wide(profile_name_) / L"disabled";
+}
+
+bool BrowserApp::Impl::SaveAdBlockerEnabled(bool enabled) {
+    const auto path = AdBlockerDisabledPath();
+    std::error_code error;
+    if (enabled) {
+        std::filesystem::remove(path, error);
+        return !error;
+    }
+    std::filesystem::create_directories(path.parent_path(), error);
+    if (error) return false;
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    CloseHandle(file);
+    return true;
+}
+
+void BrowserApp::Impl::EnsureAdBlocker(std::function<void()> resume) {
+    if (ad_blocker_ready_) { resume(); return; }
+    ad_blocker_waiters_.push_back(std::move(resume));
+    if (ad_blocker_starting_) return;
+    ad_blocker_starting_ = true;
+    const auto epoch = ad_blocker_generation_;
+    const auto weak = weak_from_this();
+    const auto finish = [weak, epoch](HRESULT error) {
+        auto app = weak.lock();
+        if (!app || app->closing_ || app->ad_blocker_generation_ != epoch) return;
+        app->ad_blocker_starting_ = false;
+        app->ad_blocker_ready_ = true;
+        if (FAILED(error)) app->Note(L"Ad blocking could not start. Restart WebCom to retry. " + HResultText(error));
+        auto waiters = std::move(app->ad_blocker_waiters_);
+        app->ad_blocker_waiters_.clear();
+        for (auto& waiter : waiters) waiter();
+        if (!app->closing_ && app->extension_profile_) app->RefreshExtensions();
+    };
+    ComPtr<ICoreWebView2Profile7> profile;
+    if (!extension_profile_ || FAILED(extension_profile_.As(&profile))) { finish(E_NOINTERFACE); return; }
+
+    wchar_t executable[32768]{};
+    const DWORD length = GetModuleFileNameW(nullptr, executable, static_cast<DWORD>(std::size(executable)));
+    if (!length || length >= std::size(executable)) { finish(E_FAIL); return; }
+    const auto source = std::filesystem::path(executable).parent_path() / L"extensions" / L"webcom-ad-blocker";
+    const auto destination = AdBlockerDisabledPath().parent_path() / L"webcom-ad-blocker";
+    std::error_code error;
+    std::filesystem::create_directories(destination, error);
+    if (error) { finish(E_ACCESSDENIED); return; }
+    // Finish copying every asset before registering the extension or navigating.
+    for (const auto* name : {L"manifest.json", L"network-rules.json", L"web-ads.css", L"youtube.css", L"youtube-player.js"}) {
+        std::filesystem::copy_file(source / name, destination / name, std::filesystem::copy_options::overwrite_existing, error);
+        if (error) { finish(E_FAIL); return; }
+    }
+    const bool disabled = std::filesystem::exists(AdBlockerDisabledPath(), error);
+    if (error) { finish(E_ACCESSDENIED); return; }
+    const HRESULT result = profile->AddBrowserExtension(destination.c_str(),
+        MakeCallback<ICoreWebView2ProfileAddBrowserExtensionCompletedHandler>(
+            [weak, epoch, disabled, finish](HRESULT error, ICoreWebView2BrowserExtension* extension) -> HRESULT {
+                auto app = weak.lock();
+                if (!app || app->closing_ || app->ad_blocker_generation_ != epoch) return S_OK;
+                if (FAILED(error) || !extension) { finish(FAILED(error) ? error : E_FAIL); return S_OK; }
+                CoString id;
+                extension->get_Id(&id.value);
+                app->ad_blocker_id_ = id.str();
+                const HRESULT result = extension->Enable(disabled ? FALSE : TRUE,
+                    MakeCallback<ICoreWebView2BrowserExtensionEnableCompletedHandler>(
+                        [finish](HRESULT error) -> HRESULT { finish(error); return S_OK; }).Get());
+                if (FAILED(result)) finish(result);
+                return S_OK;
+            }).Get());
+    if (FAILED(result)) finish(result);
+}
+
+
 void BrowserApp::Impl::CaptureExtensionProfile(Tab& tab) {
     if (tab.private_mode || !tab.web) return;
     ComPtr<ICoreWebView2_13> access;
@@ -4475,24 +4569,33 @@ void BrowserApp::Impl::LoadUnpackedExtension() {
 
 
 void BrowserApp::Impl::ToggleExtension(std::size_t index) {
-    if (index >= extensions_.size() || !extensions_[index].extension) return;
+    if (extension_toggle_pending_ || index >= extensions_.size() || !extensions_[index].extension) return;
     auto extension = extensions_[index].extension;
     const bool next = !extensions_[index].enabled;
+    const auto epoch = ad_blocker_generation_;
+    const bool bundled = extensions_[index].id == ad_blocker_id_;
+    if (bundled && !SaveAdBlockerEnabled(next)) { Note(L"The ad-blocking setting could not be saved."); return; }
+    extension_toggle_pending_ = true;
     extensions_status_ = next ? L"Enabling extension..." : L"Disabling extension..."; QueueUI();
     const auto weak = weak_from_this();
     const HRESULT hr = extension->Enable(next ? TRUE : FALSE,
-        MakeCallback<ICoreWebView2BrowserExtensionEnableCompletedHandler>([weak](HRESULT error)->HRESULT{
+        MakeCallback<ICoreWebView2BrowserExtensionEnableCompletedHandler>([weak, bundled, next, epoch](HRESULT error)->HRESULT{
             if (auto app=weak.lock(); app && !app->closing_) {
+                if (app->ad_blocker_generation_ != epoch) return S_OK;
+                app->extension_toggle_pending_ = false;
+                if (FAILED(error) && bundled) app->SaveAdBlockerEnabled(!next);
+                if (SUCCEEDED(error) && bundled) app->Note(L"Ad blocking updated. Reload open pages to apply the change.");
                 if (FAILED(error)) { app->extensions_status_=L"The extension state could not be changed. "+HResultText(error); app->QueueUI(); }
                 else app->RefreshExtensions();
             }
             return S_OK;
         }).Get());
-    if (FAILED(hr)) { extensions_status_=L"The extension state change could not start. "+HResultText(hr); QueueUI(); }
+    if (FAILED(hr)) { extension_toggle_pending_ = false; if (bundled) SaveAdBlockerEnabled(!next); extensions_status_=L"The extension state could not be changed. "+HResultText(hr); QueueUI(); }
 }
 
 void BrowserApp::Impl::RemoveExtension(std::size_t index) {
     if (index >= extensions_.size() || !extensions_[index].extension) return;
+    if (extensions_[index].id == ad_blocker_id_) { Note(L"Use the ad-blocking toggle to turn this feature off."); return; }
     const auto name = extensions_[index].name;
     const auto id = Utf8(extensions_[index].id);
     if (MessageBoxW(window_, (L"Remove \""+name+L"\" from this WebCom profile?\n\nIts saved unpacked-source mapping will also be removed.").c_str(), L"Remove extension", MB_YESNO|MB_DEFBUTTON2|MB_ICONWARNING) != IDYES) return;

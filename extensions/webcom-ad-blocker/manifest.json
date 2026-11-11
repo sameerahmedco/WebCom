@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "WebCom Ad Blocker",
+  "version": "0.1.0",
+  "description": "Blocks common web ad requests and reduces ads in the YouTube player.",
+  "permissions": ["declarativeNetRequest"],
+  "declarative_net_request": {
+    "rule_resources": [
+      { "id": "web_ads", "enabled": true, "path": "network-rules.json" }
+    ]
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "css": ["web-ads.css"],
+      "all_frames": true,
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://*.youtube.com/*", "https://*.youtube-nocookie.com/embed/*"],
+      "css": ["youtube.css"],
+      "all_frames": true,
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://*.youtube.com/*", "https://*.youtube-nocookie.com/embed/*"],
+      "js": ["youtube-player.js"],
+      "all_frames": true,
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ]
+}

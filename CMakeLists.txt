@@ -406,7 +406,9 @@ if(WEBCOM_BUILD_APP)
         add_custom_command(TARGET ${target_name} POST_BUILD
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${WEBCOM_LOADER_DIR}/WebView2Loader.dll" "$<TARGET_FILE_DIR:${target_name}>"
-            COMMENT "Copying the WebView2 runtime loader")
+            COMMAND "${CMAKE_COMMAND}" -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/extensions/webcom-ad-blocker" "$<TARGET_FILE_DIR:${target_name}>/extensions/webcom-ad-blocker"
+            COMMENT "Copying the WebView2 runtime loader and bundled ad blocker")
     endfunction()
 
     add_executable(WebCom WIN32 src/main.cpp ${WEBCOM_NATIVE_SOURCES})
@@ -429,4 +431,6 @@ if(WEBCOM_BUILD_APP)
 
     install(TARGETS WebCom RUNTIME DESTINATION .)
     install(FILES "${WEBCOM_LOADER_DIR}/WebView2Loader.dll" DESTINATION .)
+    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/extensions/webcom-ad-blocker" DESTINATION extensions
+        PATTERN "_metadata" EXCLUDE)
 endif()

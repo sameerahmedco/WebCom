@@ -133,6 +133,8 @@ void BrowserApp::Session::FinalizeProfileDeletion(Impl* requester) {
     }
 
     std::string save_error;
+    // Profile names have already passed IsValidProfileName.
+    std::filesystem::remove_all(root / L"BundledExtensions" / Wide(deleted), ec);
     if(SaveStateAfterProfileDeletion(root,state,&save_error)) registry_dirty_=false;
 
     // Open/focus the fallback before destroying the deleted profile's window.
@@ -403,6 +405,12 @@ void BrowserApp::Session::InvalidateEnvironment(std::uint64_t expected_generatio
                 tab->error = L"The shared browser engine stopped. Press Reload to recover this page.";
             }
         }
+        ++window->ad_blocker_generation_;
+        window->ad_blocker_ready_ = false;
+        window->ad_blocker_starting_ = false;
+        window->extension_toggle_pending_ = false;
+        window->ad_blocker_waiters_.clear();
+        window->ad_blocker_id_.clear();
         window->extension_profile_.Reset();
         window->extensions_.clear();
         window->extension_bootstrap_tab_id_ = 0;
