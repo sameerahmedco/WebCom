@@ -108,12 +108,23 @@ void RunTests() {
     const std::string unicodeTitle = "\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E"
                                      "\tTitle\n100%\r\\";
     state.profiles = {
-        {"Default", {}, 0, {}},
+        {"Default", {}, 0, {}, true, true, {{"Main",0}}, "Main", false, false, StartupMode::Continue, {}},
         {"Work", {
-            {"https://example.com/a?q=%20&b=1", unicodeTitle, true, true, "Research"},
-            {"http://localhost:8080/", "Local development", false, false, ""}}, 1, {}}
+            {"https://example.com/a?q=%20&b=1", unicodeTitle, true, true, "Research", "Focus"},
+            {"http://localhost:8080/", "Local development", false, false, "", "Main"}}, 1, {}, true, true,
+            {{"Main",0}}, "Main", false, false, StartupMode::Continue, {}}
     };
     state.profiles[1].groups = {{"Research", 4, true}};
+    state.profiles[1].workspaces = {{"Main", 0}, {"Focus", 4}};
+    state.profiles[1].active_workspace = "Main";
+    state.profiles[1].vertical_tabs = true;
+    state.profiles[1].vertical_tabs_collapsed = true;
+    state.profiles[1].startup_mode = StartupMode::SpecificPages;
+    state.profiles[1].startup_pages = {"https://example.com/start", "https://example.org/"};
+    state.profiles[0].save_passwords = true;
+    state.profiles[0].general_autofill = false;
+    state.profiles[1].save_passwords = false;
+    state.profiles[1].general_autofill = true;
     std::string error = "old error";
     Check(SaveState(root, state, &error), "valid state saves into a new directory");
     Check(error.empty(), "successful save clears an old error");
@@ -138,11 +149,86 @@ void RunTests() {
                   "URL percent escapes are decoded only once");
             Check(loaded.profiles[1].tabs[0].group == "Research",
                   "tab group name round trips in version 3 state");
+            Check(loaded.profiles[1].tabs[0].workspace == "Focus" && loaded.profiles[1].tabs[1].workspace == "Main",
+                  "tab workspaces round trip in version 5 state");
         }
         Check(loaded.profiles[1].groups.size()==1 && loaded.profiles[1].groups[0].name=="Research" &&
               loaded.profiles[1].groups[0].color==4 && loaded.profiles[1].groups[0].collapsed,
-              "tab group color and collapsed state round trip in version 3 state");
+              "tab group color and collapsed state round trip");
+        Check(loaded.profiles[0].save_passwords && !loaded.profiles[0].general_autofill &&
+              !loaded.profiles[1].save_passwords && loaded.profiles[1].general_autofill,
+              "password-save and general-autofill preferences round trip per profile in version 4 state");
+        Check(loaded.profiles[1].workspaces.size() == 2 && loaded.profiles[1].active_workspace == "Main" &&
+              loaded.profiles[1].vertical_tabs && loaded.profiles[1].vertical_tabs_collapsed,
+              "workspace metadata and vertical-tab rail preferences round trip in version 6 state");
+        Check(loaded.profiles[1].startup_mode == StartupMode::SpecificPages &&
+              loaded.profiles[1].startup_pages.size() == 2 &&
+              loaded.profiles[1].startup_pages[0] == "https://example.com/start" &&
+              loaded.profiles[1].startup_pages[1] == "https://example.org/",
+              "startup mode and specific pages round trip in version 7 state");
     }
+
+    // Version 3 had one app-wide password-save flag and no general-autofill field.
+    // Migration applies that legacy flag to each profile and keeps form autofill on.
+    const auto legacyV3 = root / "legacy-v3";
+    std::filesystem::create_directories(legacyV3);
+    Write(legacyV3 / "state.v1",
+        "WEBCOM_STATE\t3\nsettings\tbalanced\t0\tDefault\n"
+        "profile\tDefault\t0\n"
+        "tab\t0\t0\twebcom%3Anewtab\tNew%20tab\t\n"
+        "endprofile\nend\n");
+    const auto migratedV3 = LoadState(legacyV3);
+    Check(migratedV3.profiles.size() == 1 && !migratedV3.profiles[0].save_passwords &&
+          migratedV3.profiles[0].general_autofill,
+          "version 3 credential preferences migrate into the profile");
+
+
+    // Version 4 had profile-local credential preferences but no workspace metadata.
+    // Migration creates a Main workspace and keeps horizontal tabs.
+    const auto legacyV4 = root / "legacy-v4";
+    std::filesystem::create_directories(legacyV4);
+    Write(legacyV4 / "state.v1",
+        "WEBCOM_STATE\t4\nsettings\tbalanced\t1\tDefault\n"
+        "profile\tDefault\t0\t1\t1\n"
+        "tab\t0\t0\twebcom%3Anewtab\tNew%20tab\t\n"
+        "endprofile\nend\n");
+    const auto migratedV4 = LoadState(legacyV4);
+    Check(migratedV4.profiles.size() == 1 && migratedV4.profiles[0].workspaces.size() == 1 &&
+          migratedV4.profiles[0].workspaces[0].name == "Main" && migratedV4.profiles[0].active_workspace == "Main" &&
+          !migratedV4.profiles[0].vertical_tabs && migratedV4.profiles[0].tabs[0].workspace == "Main",
+          "version 4 state migrates into the Main workspace with horizontal tabs");
+
+
+    // Version 5 had workspaces and vertical tabs but no persisted compact rail.
+    const auto legacyV5 = root / "legacy-v5";
+    std::filesystem::create_directories(legacyV5);
+    Write(legacyV5 / "state.v1",
+        "WEBCOM_STATE\t5\nsettings\tbalanced\t1\tDefault\n"
+        "profile\tDefault\t0\t1\t1\tMain\t1\n"
+        "workspace\tMain\t0\n"
+        "tab\t0\t0\twebcom%3Anewtab\tNew%20tab\t\tMain\n"
+        "endprofile\nend\n");
+    const auto migratedV5 = LoadState(legacyV5);
+    Check(migratedV5.profiles.size()==1 && migratedV5.profiles[0].vertical_tabs &&
+          !migratedV5.profiles[0].vertical_tabs_collapsed,
+          "version 5 vertical tabs migrate with the rail expanded");
+
+    // Version 6 had no startup preference. Migration keeps the established
+    // continue-where-you-left-off behavior and no configured startup pages.
+    const auto legacyV6 = root / "legacy-v6";
+    std::filesystem::create_directories(legacyV6);
+    Write(legacyV6 / "state.v1",
+        "WEBCOM_STATE\t6\nsettings\tbalanced\t1\tDefault\n"
+        "profile\tDefault\t0\t1\t1\tMain\t1\t1\n"
+        "workspace\tMain\t0\n"
+        "tab\t0\t0\twebcom%3Anewtab\tNew%20tab\t\tMain\n"
+        "endprofile\nend\n");
+    const auto migratedV6 = LoadState(legacyV6);
+    Check(migratedV6.profiles.size() == 1 &&
+          migratedV6.profiles[0].startup_mode == StartupMode::Continue &&
+          migratedV6.profiles[0].startup_pages.empty(),
+          "version 6 state migrates to continue startup mode");
+
     const auto baseline = Read(stateFile);
     Check(std::filesystem::exists(root / "state.v1.bak"),
           "a successful save seeds a recovery generation");
@@ -171,6 +257,22 @@ void RunTests() {
           Read(stateFile).find(passwordSentinel) == std::string::npos,
           "runtime private data is absent from session metadata");
 
+    {
+        const auto localRoot = root / "local-file-roundtrip";
+        auto localState = state;
+        localState.profiles[1].tabs[0].url = "file:///C:/Docs/WebCom%20Guide.html";
+        localState.profiles[1].tabs[0].title = "Local guide";
+        std::string localError;
+        Check(SaveState(localRoot, localState, &localError), "supported local HTML can be saved in session metadata");
+        const auto loadedLocal = LoadState(localRoot);
+        Check(loadedLocal.profiles.size() > 1 && loadedLocal.profiles[1].tabs[0].url == localState.profiles[1].tabs[0].url,
+              "supported local HTML survives state round trip");
+        localState.profiles[1].tabs[0].url = "webcom:diagnostics";
+        Check(SaveState(localRoot, localState, &localError), "current native management pages are restorable");
+        localState.profiles[1].tabs[0].url = "webcom:recovery";
+        Check(SaveState(localRoot, localState, &localError), "recovery management page is restorable");
+    }
+
     const auto rejectSave = [&](const AppState& invalid, std::string_view label) {
         error.clear();
         Check(!SaveState(root, invalid, &error) && !error.empty(), label);
@@ -190,7 +292,7 @@ void RunTests() {
         rejectSave(invalid, std::string("unsafe URL cannot be saved: ") + url);
     }
     auto invalid = state;
-    invalid.profiles.push_back({"wOrK", {}, 0, {}});
+    invalid.profiles.push_back({"wOrK", {}, 0, {}, true, true, {{"Main",0}}, "Main", false, false, StartupMode::Continue, {}});
     rejectSave(invalid, "case-insensitive duplicate profile rejected");
     invalid = state; invalid.active_profile = "Missing";
     rejectSave(invalid, "missing active profile rejected");
@@ -208,6 +310,24 @@ void RunTests() {
     rejectSave(invalid, "oversized URL rejected");
     invalid = state; invalid.profiles[1].groups[0].color = 8;
     rejectSave(invalid, "invalid tab group color rejected");
+    invalid = state; invalid.profiles[1].workspaces[1].color = 8;
+    rejectSave(invalid, "invalid workspace color rejected");
+    invalid = state; invalid.profiles[1].workspaces.push_back({"focus", 1});
+    rejectSave(invalid, "case-insensitive duplicate workspace rejected");
+    invalid = state; invalid.profiles[1].tabs[0].workspace = "Missing";
+    rejectSave(invalid, "tab cannot reference a missing workspace");
+    invalid = state; invalid.profiles[1].active_workspace = "Missing";
+    rejectSave(invalid, "active workspace must exist");
+    invalid = state; invalid.profiles[1].startup_mode = static_cast<StartupMode>(99);
+    rejectSave(invalid, "invalid startup mode rejected");
+    invalid = state; invalid.profiles[1].startup_pages = {"webcom:settings"};
+    rejectSave(invalid, "internal page cannot be configured as a startup page");
+    invalid = state; invalid.profiles[1].startup_pages = {"https://user:pass@example.com/"};
+    rejectSave(invalid, "startup page credentials rejected");
+    invalid = state; invalid.profiles[1].startup_pages = {"https://example.com/", "HTTPS://EXAMPLE.COM/"};
+    rejectSave(invalid, "case-insensitive duplicate startup pages rejected");
+    invalid = state; invalid.profiles[1].startup_pages.assign(17, "https://example.com/");
+    rejectSave(invalid, "startup page count limit enforced");
     invalid = state; invalid.profiles[1].groups.push_back({"research", 1, false});
     rejectSave(invalid, "case-insensitive duplicate tab group rejected");
     invalid = state;
@@ -215,7 +335,7 @@ void RunTests() {
     rejectSave(invalid, "per-profile tab limit enforced");
     invalid = state;
     for (unsigned i = 0; i < 31; ++i)
-        invalid.profiles.push_back({"Profile " + std::to_string(i), {}, 0, {}});
+        invalid.profiles.push_back({"Profile " + std::to_string(i), {}, 0, {}, true, true, {{"Main",0}}, "Main", false, false, StartupMode::Continue, {}});
     rejectSave(invalid, "profile count limit enforced");
     invalid = state;
     for (auto& profile : invalid.profiles)
@@ -294,6 +414,35 @@ void RunTests() {
         const auto recovered_after_delete = LoadState(root,&recovered_deleted);
         Check(recovered_deleted && recovered_after_delete.profiles.size()==1 && recovered_after_delete.profiles[0].name=="Default",
               "recovery backup cannot resurrect a deleted profile");
+    }
+
+    {
+        AppState recovered = state;
+        recovered.profiles[0].active_workspace = "Main";
+        recovered.profiles[0].tabs = {{"https://example.com/one", "One", true, true, "", "Main"},
+                                      {"https://example.com/two", "Two", false, false, "", "Main"}};
+        recovered.profiles[0].groups = {{"Recovered", 2, true}};
+        recovered.profiles[1].workspaces = {{"Main",0},{"Focus",3}};
+        recovered.profiles[1].active_workspace = "Focus";
+        recovered.profiles[1].tabs = {{"https://example.org/", "Work", false, false, "", "Focus"}};
+        const bool work_passwords = recovered.profiles[1].save_passwords;
+        const bool work_autofill = recovered.profiles[1].general_autofill;
+        ResetRecoveredSessionTabs(recovered);
+        Check(recovered.profiles[0].tabs.size()==1 && recovered.profiles[0].tabs[0].url=="webcom:newtab" &&
+              recovered.profiles[0].groups.empty() && recovered.profiles[0].active_tab==0,
+              "recovery reset replaces restored tabs and groups with one new tab");
+        Check(recovered.profiles[1].tabs.size()==1 && recovered.profiles[1].tabs[0].workspace=="Focus" &&
+              recovered.profiles[1].workspaces.size()==2 && recovered.profiles[1].save_passwords==work_passwords &&
+              recovered.profiles[1].general_autofill==work_autofill,
+              "recovery reset preserves workspaces and profile preferences");
+        Check(SaveState(root,state,&error), "recovered source state saved before reset persistence test");
+        Check(SaveStateAfterRecoveryReset(root,recovered,&error), "recovery reset state persisted with sanitized backup");
+        Write(root / "state.v1", "corrupt");
+        bool recovered_reset = false;
+        const auto fallback_after_reset = LoadState(root,&recovered_reset);
+        Check(recovered_reset && fallback_after_reset.profiles[0].tabs.size()==1 &&
+              fallback_after_reset.profiles[0].tabs[0].url=="webcom:newtab",
+              "recovery backup cannot resurrect discarded restored tabs");
     }
 
     Check(SaveState(root, AppState{}, &error) && IsDefaultNewTab(LoadState(root)),

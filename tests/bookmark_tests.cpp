@@ -47,6 +47,23 @@ int main() {
     const std::vector<Bookmark> nested{{"Spec","https://spec.example/","Work/Research/2027"},{"Plan","https://plan.example/","Work/Planning"}};
     Check(NormalizeBookmarkFolderPath("  Work\\Research//2027  ")=="Work/Research/2027", "nested folder paths normalize separators and whitespace");
     Check(BookmarkFolderParent("Work/Research/2027")=="Work/Research", "nested folder parent is derived");
+    std::vector<std::string> explicit_folders;
+    Check(AddBookmarkFolder(explicit_folders,"Empty") && AddBookmarkFolder(explicit_folders,"Work/Empty Child"),
+          "explicit empty and nested bookmark folders can be created");
+    Check(!AddBookmarkFolder(explicit_folders,"empty"), "explicit folder names are unique ignoring case");
+    Check(SaveBookmarkFolders(root,"Default",explicit_folders,&error), "explicit bookmark folders save atomically");
+    const auto loaded_folders=LoadBookmarkFolders(root,"DEFAULT");
+    Check(loaded_folders==explicit_folders, "explicit bookmark folders round trip by profile");
+    const auto combined_paths=BookmarkFolderPaths(nested,loaded_folders,true);
+    Check(std::find(combined_paths.begin(),combined_paths.end(),"Empty")!=combined_paths.end() &&
+          std::find(combined_paths.begin(),combined_paths.end(),"Work/Empty Child")!=combined_paths.end(),
+          "folder listing includes explicit empty folders and ancestors");
+    auto folder_defs=explicit_folders; auto folder_bookmarks=nested;
+    Check(RenameBookmarkFolderPath(folder_defs,folder_bookmarks,"Work","Projects") &&
+          folder_bookmarks[0].folder=="Projects/Research/2027" && folder_defs[1]=="Projects/Empty Child",
+          "renaming a folder tree updates bookmarks and empty descendant folders together");
+    Check(RemoveBookmarkFolder(folder_defs,folder_bookmarks,"Empty"), "unused explicit folder can be removed");
+    Check(!RemoveBookmarkFolder(folder_defs,folder_bookmarks,"Projects"), "folder containing bookmarks cannot be removed");
     const auto nested_paths=BookmarkFolderPaths(nested,true);
     Check(nested_paths.size()==4 && nested_paths[0]=="Work" && nested_paths[1]=="Work/Planning" && nested_paths[2]=="Work/Research" && nested_paths[3]=="Work/Research/2027",
           "folder list includes unique ancestors in stable depth order");

@@ -23,12 +23,33 @@
 
 namespace webcom {
 namespace {
-constexpr std::string_view Header = "WEBCOM_APPEARANCE\t1\n";
-constexpr std::size_t MaxBytes = 256;
+constexpr std::string_view HeaderV1 = "WEBCOM_APPEARANCE\t1\n";
+constexpr std::string_view HeaderV2 = "WEBCOM_APPEARANCE\t2\n";
+constexpr std::string_view HeaderV3 = "WEBCOM_APPEARANCE\t3\n";
+constexpr std::string_view HeaderV4 = "WEBCOM_APPEARANCE\t4\n";
+constexpr std::string_view HeaderV5 = "WEBCOM_APPEARANCE\t5\n";
+constexpr std::size_t MaxBytes = 512;
 
 bool Fail(std::string* error, std::string message) {
     if (error) *error = std::move(message);
     return false;
+}
+
+bool ValidDisplayName(std::string_view value) {
+    if (value.size() > 80) return false;
+    for (std::size_t i=0;i<value.size();) {
+        const auto first=static_cast<unsigned char>(value[i++]);
+        if(first<0x80){if(first<0x20 || first==0x7f)return false;continue;}
+        unsigned remaining=0;std::uint32_t codepoint=0,minimum=0;
+        if(first>=0xc2 && first<=0xdf){remaining=1;codepoint=first&31;minimum=0x80;}
+        else if(first>=0xe0 && first<=0xef){remaining=2;codepoint=first&15;minimum=0x800;}
+        else if(first>=0xf0 && first<=0xf4){remaining=3;codepoint=first&7;minimum=0x10000;}
+        else return false;
+        if(remaining>value.size()-i)return false;
+        while(remaining--){const auto next=static_cast<unsigned char>(value[i++]);if((next&0xc0)!=0x80)return false;codepoint=(codepoint<<6)|(next&63);}
+        if(codepoint<minimum || codepoint>0x10ffff || (codepoint>=0xd800 && codepoint<=0xdfff))return false;
+    }
+    return true;
 }
 
 bool ValidTheme(BrowserTheme theme) {
@@ -182,6 +203,11 @@ std::uint32_t ContrastInk(std::uint32_t rgb) {
 }
 
 Palette MakePalette(const Appearance& appearance, std::string_view profile) {
+    if (appearance.high_contrast) {
+        // Browser chrome only: strong contrast without modifying website content.
+        return Palette{0x000000, 0x000000, 0x0a0a0a, 0x1f1f1f, 0xffffff,
+                       0xe6e6e6, 0xffff00, 0x000000, 0xffffff};
+    }
     Palette palette{0x18191c, 0x292a2d, 0x202124, 0x3c4043, 0xe8eaed,
                     0xaeb4bc, 0xa8c7fa, 0x303134, 0x414347};
     switch (appearance.theme) {
@@ -222,9 +248,14 @@ Appearance LoadAppearance(const std::filesystem::path& root, std::string_view pr
         std::string text(static_cast<std::size_t>(size), '\0');
         if (!stream || !stream.read(text.data(), static_cast<std::streamsize>(size)) ||
             stream.peek() != std::char_traits<char>::eof()) return {};
-        if (!text.starts_with(Header) || !text.ends_with("end\n")) return {};
+        const bool v5 = text.starts_with(HeaderV5);
+        const bool v4 = text.starts_with(HeaderV4);
+        const bool v3 = text.starts_with(HeaderV3);
+        const bool v2 = text.starts_with(HeaderV2);
+        const bool v1 = text.starts_with(HeaderV1);
+        if ((!v1 && !v2 && !v3 && !v4 && !v5) || !text.ends_with("end\n")) return {};
         std::string_view rows(text);
-        rows.remove_prefix(Header.size()); rows.remove_suffix(4);
+        rows.remove_prefix(v5 ? HeaderV5.size() : v4 ? HeaderV4.size() : v3 ? HeaderV3.size() : v2 ? HeaderV2.size() : HeaderV1.size()); rows.remove_suffix(4);
         auto take = [&rows](std::string_view key) -> std::optional<std::string_view> {
             const auto end = rows.find('\n');
             if (end == std::string_view::npos) return std::nullopt;
@@ -236,12 +267,57 @@ Appearance LoadAppearance(const std::filesystem::path& root, std::string_view pr
         const auto theme_row = take("theme");
         const auto accent_row = take("accent");
         const auto bookmarks_row = take("bookmarks");
-        if (!theme_row || !accent_row || !bookmarks_row || !rows.empty()) return {};
+        std::optional<std::string_view> motion_row;
+        std::optional<std::string_view> display_row;
+        std::optional<std::string_view> contrast_row;
+        std::optional<std::string_view> reader_row;
+        if (v2 || v3 || v4 || v5) motion_row = take("motion");
+        if (v3 || v4 || v5) display_row = take("display");
+        if (v4 || v5) contrast_row = take("contrast");
+        if (v5) reader_row = take("reader");
+        if (!theme_row || !accent_row || !bookmarks_row || ((v2 || v3 || v4 || v5) && !motion_row) ||
+            ((v3 || v4 || v5) && !display_row) || ((v4 || v5) && !contrast_row) || (v5 && !reader_row) || !rows.empty()) return {};
         const auto theme = ParseTheme(*theme_row);
         if (!theme || (*bookmarks_row != "1" && *bookmarks_row != "0")) return {};
         Appearance appearance;
         appearance.theme = *theme;
         appearance.show_bookmarks = *bookmarks_row == "1";
+        if (motion_row) {
+            if (*motion_row != "full" && *motion_row != "reduced") return {};
+            appearance.reduce_motion = *motion_row == "reduced";
+        }
+        if (display_row) {
+            appearance.display_name = UnescapeField(*display_row);
+            if (!ValidDisplayName(appearance.display_name)) return {};
+        }
+        if (contrast_row) {
+            if (*contrast_row != "normal" && *contrast_row != "high") return {};
+            appearance.high_contrast = *contrast_row == "high";
+        }
+        if (reader_row) {
+            std::array<std::string_view,3> fields{}; std::size_t count=0, at=0;
+            while (count<fields.size()) {
+                const auto sep=reader_row->find('\t',at);
+                fields[count++]=reader_row->substr(at,sep==std::string_view::npos?reader_row->size()-at:sep-at);
+                if (sep==std::string_view::npos) break;
+                at=sep+1;
+            }
+            if (count!=3) return {};
+            const auto parse_scale=[](std::string_view value,int& out){
+                if(value=="-2"){out=-2;return true;} if(value=="-1"){out=-1;return true;}
+                if(value=="0"){out=0;return true;} if(value=="1"){out=1;return true;}
+                if(value=="2"){out=2;return true;} if(value=="3"){out=3;return true;}
+                if(value=="4"){out=4;return true;} return false;
+            };
+            const auto parse_width=[](std::string_view value,int& out){
+                if(value=="0"){out=0;return true;} if(value=="1"){out=1;return true;}
+                if(value=="2"){out=2;return true;} return false;
+            };
+            if(!parse_scale(fields[0],appearance.reader_text_scale) ||
+               !parse_width(fields[1],appearance.reader_width_mode) ||
+               (fields[2] != "sans" && fields[2] != "serif")) return {};
+            appearance.reader_serif = fields[2] == "serif";
+        }
         if (*accent_row != "auto") {
             appearance.accent_rgb = ParseHexColor(*accent_row);
             if (!appearance.accent_rgb) return {};
@@ -259,11 +335,23 @@ bool SaveAppearance(const std::filesystem::path& root, std::string_view profile,
         if (!ValidTheme(appearance.theme)) return Fail(error, "Unknown browser theme.");
         if (appearance.accent_rgb && *appearance.accent_rgb > 0xffffff)
             return Fail(error, "Profile colors must contain exactly 24 RGB bits.");
-        std::string content(Header);
+        if (!ValidDisplayName(appearance.display_name))
+            return Fail(error, "Profile display names must be at most 80 UTF-8 bytes and contain no control characters.");
+        if (appearance.reader_text_scale < -2 || appearance.reader_text_scale > 4 ||
+            appearance.reader_width_mode < 0 || appearance.reader_width_mode > 2)
+            return Fail(error, "Reader preferences are out of range.");
+        std::string content(HeaderV5);
         content += "theme\t"; content += ThemeKey(appearance.theme);
         content += "\naccent\t";
         content += appearance.accent_rgb ? FormatHexColor(*appearance.accent_rgb) : "auto";
-        content += appearance.show_bookmarks ? "\nbookmarks\t1\nend\n" : "\nbookmarks\t0\nend\n";
+        content += appearance.show_bookmarks ? "\nbookmarks\t1" : "\nbookmarks\t0";
+        content += appearance.reduce_motion ? "\nmotion\treduced" : "\nmotion\tfull";
+        content += "\ndisplay\t" + EscapeField(appearance.display_name);
+        content += appearance.high_contrast ? "\ncontrast\thigh" : "\ncontrast\tnormal";
+        content += "\nreader\t" + std::to_string(appearance.reader_text_scale) + "\t" +
+                   std::to_string(appearance.reader_width_mode) + "\t" +
+                   (appearance.reader_serif ? "serif" : "sans");
+        content += "\nend\n";
         const auto destination = File(root, profile);
         std::error_code ec;
         std::filesystem::create_directories(destination.parent_path(), ec);

@@ -99,6 +99,7 @@ struct SearchState {
     std::uint64_t result=0;
     std::vector<TabSearchItem> items;
     std::vector<std::size_t> visible;
+    SearchPickerOptions options{};
     Buffer chrome_buffer,row_buffer;
 
     int D(int value)const{return MulDiv(value,static_cast<int>(dpi),96);}
@@ -132,6 +133,7 @@ struct SearchState {
     std::wstring StateLabel(const TabSearchItem& item)const{
         std::wstring text;
         auto add=[&](const wchar_t* label){if(!text.empty())text+=L" · ";text+=label;};
+        if(!options.show_tab_state)return text;
         if(item.private_mode)add(L"Incognito");
         if(item.muted)add(L"Muted");else if(item.audible)add(L"Playing");
         if(item.sleeping)add(L"Sleeping");
@@ -181,7 +183,7 @@ struct SearchState {
             if(item.id==old_id || (!old_id && item.active))selected=static_cast<int>(i);
         }
         SendMessageW(list,WM_SETREDRAW,TRUE,0);
-        SetWindowTextW(empty,items.empty()?L"No open tabs in this window.":L"No matching tabs.\nTry a page title or address.");
+        SetWindowTextW(empty,items.empty()?(options.show_tab_state?L"No open tabs in this window.":options.empty_text):options.empty_text);
         ShowWindow(list,visible.empty()?SW_HIDE:SW_SHOWNOACTIVATE);
         ShowWindow(empty,visible.empty()?SW_SHOWNOACTIVATE:SW_HIDE);
         ShowWindow(clear,query.empty()?SW_HIDE:SW_SHOWNOACTIVATE);
@@ -284,15 +286,15 @@ struct SearchState {
         const bool buffered=chrome_buffer.Ensure(output,width,height);
         HDC dc=buffered?chrome_buffer.dc:output;
         RECT r{0,0,width,height};Fill(dc,r,Background);Round(dc,r,Background,Border,D(24));
-        const std::wstring count=visible.size()==items.size()?std::to_wstring(items.size())+(items.size()==1?L" tab":L" tabs"):
-            std::to_wstring(visible.size())+L" of "+std::to_wstring(items.size());
+        const std::wstring count=visible.size()==items.size()?std::to_wstring(items.size())+L" "+(items.size()==1?options.noun_singular:options.noun_plural):
+            std::to_wstring(visible.size())+L" of "+std::to_wstring(items.size())+L" "+options.noun_plural;
         Text(dc,count,{width-D(105),D(13),width-D(16),D(35)},small_font,Muted,DT_RIGHT);
         const RECT field_rect{D(12),D(43),width-D(12),D(83)};
         Round(dc,field_rect,Field,GetFocus()==edit?Accent:Border,D(16));
         Text(dc,L"\uE721",{D(22),D(52),D(40),D(74)},icon_font,Muted,DT_CENTER);
         Fill(dc,{D(12),D(94),width-D(12),D(94)+1},Border);
         Fill(dc,{D(12),height-D(38),width-D(12),height-D(38)+1},Border);
-        Text(dc,L"↑ ↓ navigate   Enter switch   Esc close",{D(16),height-D(31),width-D(16),height-D(7)},small_font,Muted);
+        Text(dc,options.footer,{D(16),height-D(31),width-D(16),height-D(7)},small_font,Muted);
         if(buffered)BitBlt(output,0,0,width,height,dc,0,0,SRCCOPY);
         EndPaint(window,&paint);
     }
@@ -305,7 +307,7 @@ LRESULT CALLBACK EditProc(HWND window,UINT message,WPARAM wparam,LPARAM lparam,U
         const LRESULT result=DefSubclassProc(window,message,wparam,lparam);
         if(!state->done && IsWindow(window) && !GetWindowTextLengthW(window)){
             HDC dc=GetDC(window);RECT r{};GetClientRect(window,&r);
-            Text(dc,L"Search title or address",r,state->font,state->Muted);ReleaseDC(window,dc);
+            Text(dc,state->options.placeholder,r,state->font,state->Muted);ReleaseDC(window,dc);
         }
         return result;
     }
@@ -427,13 +429,14 @@ struct Cleanup {
 
 } // namespace
 
-std::uint64_t ShowTabSearch(HWND owner,POINT anchor_screen,const std::vector<TabSearchItem>& items,UINT dpi,const Palette* palette){
+std::uint64_t ShowTabSearch(HWND owner,POINT anchor_screen,const std::vector<TabSearchItem>& items,UINT dpi,const Palette* palette,const SearchPickerOptions* options){
     if(!owner || !IsWindow(owner))return 0;
     if(HWND current=static_cast<HWND>(GetPropW(owner,OwnerProperty));current && IsWindow(current))
         SendMessageW(current,WM_CANCELMODE,0,0);
     if(!IsWindow(owner))return 0;
     SearchState state;
     Cleanup cleanup{state};
+    if(options)state.options=*options;
     state.owner=owner;state.previous_focus=GetFocus();state.dpi=std::clamp(dpi,72u,768u);
     state.ApplyPalette(palette);
     for(std::size_t i=0;i<std::min<std::size_t>(items.size(),200);++i){
@@ -468,14 +471,14 @@ std::uint64_t ShowTabSearch(HWND owner,POINT anchor_screen,const std::vector<Tab
     WNDCLASSEXW wc{};wc.cbSize=sizeof(wc);wc.style=CS_DROPSHADOW;
     wc.lpfnWndProc=WindowProc;wc.hInstance=instance;wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);wc.lpszClassName=WindowClass;
     if(!RegisterClassExW(&wc) && GetLastError()!=ERROR_CLASS_ALREADY_EXISTS)return 0;
-    HWND popup=CreateWindowExW(WS_EX_TOOLWINDOW,WindowClass,L"Search open tabs",WS_POPUP|WS_CLIPCHILDREN,
+    HWND popup=CreateWindowExW(WS_EX_TOOLWINDOW,WindowClass,state.options.title,WS_POPUP|WS_CLIPCHILDREN,
         left,top,state.width,state.height,owner,nullptr,instance,&state);
     if(!popup)return 0;
     const BOOL dark=TRUE;DwmSetWindowAttribute(popup,20,&dark,sizeof(dark));
     HRGN region=CreateRoundRectRgn(0,0,state.width+1,state.height+1,state.D(24),state.D(24));
     if(region && !SetWindowRgn(popup,region,FALSE))DeleteObject(region);
     // The native label immediately precedes the EDIT in tab order for assistive technology.
-    state.label=CreateWindowExW(0,L"STATIC",L"Search tabs",WS_CHILD|WS_VISIBLE|SS_LEFT,
+    state.label=CreateWindowExW(0,L"STATIC",state.options.title,WS_CHILD|WS_VISIBLE|SS_LEFT,
         state.D(16),state.D(14),state.width-state.D(130),state.D(21),popup,nullptr,instance,nullptr);
     if(state.label)SendMessageW(state.label,WM_SETFONT,reinterpret_cast<WPARAM>(state.title_font),FALSE);
     state.edit=CreateWindowExW(0,L"EDIT",L"",WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_AUTOHSCROLL,
@@ -484,7 +487,7 @@ std::uint64_t ShowTabSearch(HWND owner,POINT anchor_screen,const std::vector<Tab
     state.clear=CreateWindowExW(0,L"BUTTON",L"Clear search",WS_CHILD|WS_TABSTOP|BS_OWNERDRAW,
         state.width-state.D(48),state.D(47),state.D(32),state.D(32),popup,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(ClearSearch)),instance,nullptr);
-    state.list=CreateWindowExW(0,L"LISTBOX",L"Matching open tabs",
+    state.list=CreateWindowExW(0,L"LISTBOX",state.options.title,
         WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_VSCROLL|LBS_OWNERDRAWFIXED|LBS_HASSTRINGS|LBS_NOTIFY|LBS_NOINTEGRALHEIGHT,
         state.D(4),state.list_top,state.width-state.D(8),state.list_height,popup,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(ResultsList)),instance,nullptr);

@@ -1,0 +1,23 @@
+# WebCom v2 features
+
+- Chrome-like native UI.
+- Multi-profile browsing.
+- Workspaces.
+- Vertical tabs.
+- History.
+- Bookmarks.
+- Password saving.
+- Cookie controls.
+- Site permissions.
+- SSL/security UI.
+- Unpacked extensions.
+- Extension diagnostics.
+- Reader mode.
+- Split view.
+- Capture tools.
+- Crash recovery.
+- Safe updates.
+- Verified rollback.
+- Stable/Beta channels.
+- Accessibility support.
+- Memory checks.

@@ -2,11 +2,34 @@
 
 BrowserApp::Session::Session(HINSTANCE instance, std::filesystem::path data_root)
     : root(std::move(data_root)), state(), instance_(instance) {
+    std::error_code ec;
+    const bool had_session = std::filesystem::exists(root / "state.v1", ec) ||
+                             std::filesystem::exists(root / "state.v1.bak", ec);
     state = LoadState(root, &recovered_session_);
+    const auto onboarding = LoadOnboardingState(root);
+    first_run_welcome_pending_ = !had_session && !onboarding.welcome_seen;
+    runtime_session_started_ = BeginRuntimeSession(root, kWebComVersion, &previous_runtime_unclean_, nullptr);
+    if (recovered_session_) AppendRuntimeLog(root, RuntimeLogLevel::Warning, "session.state_recovered", "state.v1 backup was used", nullptr);
+    if (previous_runtime_unclean_) AppendRuntimeLog(root, RuntimeLogLevel::Warning, "session.crash_evidence", "previous process did not record a clean shutdown", nullptr);
+}
+
+bool BrowserApp::Session::TakeFirstRunWelcome() {
+    if (!first_run_welcome_pending_) return false;
+    first_run_welcome_pending_ = false;
+    std::string ignored;
+    SaveOnboardingState(root, {true}, &ignored);
+    return true;
+}
+
+bool BrowserApp::Session::ClaimUpdateHealthOwner() {
+    if (update_health_owner_claimed_) return false;
+    update_health_owner_claimed_ = true;
+    return true;
 }
 
 BrowserApp::Session::~Session() {
     shutting_down_ = true;
+    if (runtime_session_started_) EndRuntimeSession(root, kWebComVersion, nullptr);
     // During exception/startup cleanup the facade can still own open windows.
     // Move the registry first, so WM_DESTROY cannot mutate a vector in use.
     auto remaining = std::move(windows_);
@@ -34,6 +57,10 @@ void BrowserApp::Session::ActivateProfile(std::string_view profile) {
         [&](const SavedProfile& saved) { return saved.name == profile; });
     if (found == state.profiles.end()) return;
     state.active_profile = found->name;
+    // Keep the legacy app-wide field synchronized for v1-v3 migration and
+    // sensible defaults when a brand-new profile is created. Version 4
+    // persists the authoritative value on each SavedProfile.
+    state.save_passwords = found->save_passwords;
     registry_dirty_ = true;
 }
 
@@ -94,10 +121,13 @@ void BrowserApp::Session::FinalizeProfileDeletion(Impl* requester) {
     std::string lower=deleted;
     for(char& c:lower) if(c>='A' && c<='Z') c=static_cast<char>(c+('a'-'A'));
     std::error_code ec;
-    for(const auto& file:std::array<std::filesystem::path,5>{
+    for(const auto& file:std::array<std::filesystem::path,8>{
             root / "Appearance" / (lower+".v1"),
             root / "Bookmarks" / (lower+".v1"),
+            root / "BookmarkFolders" / (lower+".v1"),
             root / "Permissions" / (lower+".v1"),
+            root / "Sessions" / (lower+".v1"),
+            ExtensionSourcesPath(root,deleted),
             HistoryPathFor(root,deleted), DownloadsPathFor(root,deleted)}) {
         ec.clear(); std::filesystem::remove(file,ec);
     }
@@ -130,6 +160,24 @@ bool BrowserApp::Session::OpenProfile(std::string profile, const std::wstring& a
     if (!IsValidProfileName(profile)) return false;
     const auto resolved = ResolveAddress(Utf8(address));
     if (!resolved.allowed || (!address.empty() && Utf8(address).empty())) return false;
+    if (recovered_session_) {
+        const int choice = MessageBoxW(nullptr,
+            L"WebCom recovered the last known-good session because the current session file could not be read.\n\n"
+            L"Choose Yes to keep the recovered tabs.\nChoose No to start with fresh tabs.\n\n"
+            L"Starting fresh keeps your profiles, workspaces, bookmarks, passwords, cookies, history and preferences.",
+            L"WebCom session recovery", MB_YESNO | MB_DEFBUTTON1 | MB_ICONWARNING | MB_TASKMODAL);
+        force_recovered_tabs_ = choice == IDYES;
+        if (choice == IDNO) {
+            ResetRecoveredSessionTabs(state);
+            std::string save_error;
+            if (!SaveStateAfterRecoveryReset(root, state, &save_error)) {
+                MessageBoxW(nullptr,
+                    (L"WebCom started with fresh tabs, but could not update the recovery files.\n\n" + Wide(save_error)).c_str(),
+                    L"WebCom session recovery", MB_OK | MB_ICONWARNING | MB_TASKMODAL);
+            } else registry_dirty_ = false;
+        }
+        recovered_session_ = false;
+    }
     auto saved = std::find_if(state.profiles.begin(), state.profiles.end(),
         [&](const SavedProfile& item) { return _wcsicmp(Wide(item.name).c_str(), Wide(profile).c_str()) == 0; });
     if (saved == state.profiles.end()) {
@@ -138,7 +186,8 @@ bool BrowserApp::Session::OpenProfile(std::string profile, const std::wstring& a
                         L"Profiles", MB_OK | MB_ICONINFORMATION);
             return false;
         }
-        state.profiles.push_back({profile, {{"webcom:newtab", "New Tab", false, false}}, 0});
+        state.profiles.push_back({profile, {{"webcom:newtab", "New Tab", false, false}}, 0, {}, state.save_passwords, true,
+            {{"Main",0}}, "Main", false, false, StartupMode::Continue, {}});
         registry_dirty_ = true;
     } else profile = saved->name;
     ActivateProfile(profile);
@@ -172,10 +221,6 @@ bool BrowserApp::Session::OpenProfile(std::string profile, const std::wstring& a
         throw;
     }
     if (registry_dirty_) window->Dirty();
-    if (recovered_session_) {
-        window->Note(L"Recovered your last known-good session after the current session file could not be read.");
-        recovered_session_ = false;
-    }
     return true;
 }
 
@@ -190,7 +235,10 @@ std::string BrowserApp::Session::ProfileForWindow(HWND window) const {
 bool BrowserApp::Session::MoveTabToProfile(Impl* source,std::uint64_t tab_id,std::string_view target_profile) {
     if(shutting_down_ || !source || source->closing_ || target_profile.empty() || target_profile==source->profile_name_) return false;
     auto* tab=source->Find(tab_id); if(!tab || source->HasDownload(*tab)) return false;
-    const auto url=tab->url,title=tab->title,group=tab->group; const bool private_mode=tab->private_mode;
+    const auto url = tab->url;
+    const auto title = tab->title;
+    const auto group = tab->group;
+    const bool private_mode = tab->private_mode;
     std::optional<std::uint8_t> group_color;
     if(!group.empty())if(const auto* meta=source->FindTabGroup(group))group_color=meta->color;
     const bool pinned=tab->activity.pinned,awake=tab->activity.protected_from_sleep;
@@ -200,6 +248,7 @@ bool BrowserApp::Session::MoveTabToProfile(Impl* source,std::uint64_t tab_id,std
     if(!target || target.get()==source)return false;
     const auto new_id=target->Add(url,true,private_mode);auto* created=target->Find(new_id);if(!created)return false;
     created->title=title;created->activity.pinned=pinned;created->activity.protected_from_sleep=awake;created->group=group;
+    created->workspace=target->active_workspace_.empty()?L"Main":target->active_workspace_;
     if(pinned){std::size_t pinned_count=0;for(const auto& item:target->tabs_)if(item->id!=new_id && item->activity.pinned)++pinned_count;target->MoveTabTo(new_id,pinned_count);}
     if(!group.empty()){
         target->AssignTabGroup(new_id,group);
@@ -217,7 +266,14 @@ bool BrowserApp::Session::MoveTabToProfile(Impl* source,std::uint64_t tab_id,std
         else if(source->active_>=source->tabs_.size())source->active_=source->tabs_.size()-1;
         for(auto& item:source->tabs_)item->activity.active=false;
         source->tabs_[source->active_]->activity.active=true;
-        if(was_active){source->Ensure(*source->tabs_[source->active_]);source->SetVisible(*source->tabs_[source->active_],true);}
+        if(was_active){
+            const auto same_workspace=std::find_if(source->tabs_.begin(),source->tabs_.end(),[&](const auto& item){return item->workspace==source->active_workspace_;});
+            if(same_workspace!=source->tabs_.end())source->active_=static_cast<std::size_t>(same_workspace-source->tabs_.begin());
+            else source->active_workspace_=source->tabs_[source->active_]->workspace;
+            for(auto& item:source->tabs_)item->activity.active=false;
+            source->tabs_[source->active_]->activity.active=true;
+            source->Ensure(*source->tabs_[source->active_]);source->ApplyTabVisibility();
+        }
         source->Dirty();source->UpdateUI(true);
     }
     return true;
@@ -267,6 +323,8 @@ void BrowserApp::Session::DeliverEnvironment(const std::shared_ptr<Impl>& window
     window->starting_environment_ = false;
     window->environment_generation_ = environment_generation_;
     if (FAILED(error) || !environment) {
+        AppendRuntimeLog(root, RuntimeLogLevel::Error, "webview.environment.failed",
+                         "hresult=" + std::to_string(static_cast<long long>(error)), nullptr);
         window->environment_failed_ = true;
         for (auto& tab : window->tabs_) if (!IsHome(tab->url) || tab->popup_args) {
             tab->failed = true;
@@ -283,6 +341,8 @@ void BrowserApp::Session::DeliverEnvironment(const std::shared_ptr<Impl>& window
     window->environment_ = environment;
     window->environment_failed_ = false;
     if (auto* tab = window->Active()) window->Ensure(*tab);
+    if (auto* tab = window->Active(); tab && InternalPageFor(tab->url) == InternalPage::Extensions)
+        window->EnsureExtensionProfile();
     if (window->delete_profile_pending_) {
         for (auto& tab : window->tabs_) {
             if (!tab->private_mode && tab->url == L"about:blank") { window->Ensure(*tab); break; }
@@ -311,7 +371,16 @@ void BrowserApp::Session::RequestEnvironment(const std::shared_ptr<Impl>& reques
             return S_OK;
         });
     const auto data = root / L"User Data";
-    const HRESULT result = CreateCoreWebView2EnvironmentWithOptions(nullptr, data.c_str(), nullptr, callback.Get());
+    auto options = Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
+    HRESULT option_result = options ? S_OK : E_OUTOFMEMORY;
+    if (SUCCEEDED(option_result)) {
+        ComPtr<ICoreWebView2EnvironmentOptions6> extension_options;
+        option_result = options.As(&extension_options);
+        if (SUCCEEDED(option_result) && extension_options)
+            option_result = extension_options->put_AreBrowserExtensionsEnabled(TRUE);
+    }
+    const HRESULT result = FAILED(option_result) ? option_result :
+        CreateCoreWebView2EnvironmentWithOptions(nullptr, data.c_str(), options.Get(), callback.Get());
     if (FAILED(result) && generation == environment_generation_) {
         environment_starting_ = false;
         const auto windows = windows_;
@@ -334,6 +403,11 @@ void BrowserApp::Session::InvalidateEnvironment(std::uint64_t expected_generatio
                 tab->error = L"The shared browser engine stopped. Press Reload to recover this page.";
             }
         }
+        window->extension_profile_.Reset();
+        window->extensions_.clear();
+        window->extension_bootstrap_tab_id_ = 0;
+        window->extensions_loading_ = false;
+        window->extensions_status_ = L"Extension engine restarted. Refresh Extensions after the browser engine recovers.";
         window->environment_.Reset();
         window->starting_environment_ = false;
         window->environment_failed_ = true;

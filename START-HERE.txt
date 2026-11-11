@@ -1,35 +1,16 @@
-WebCom for Windows 0.5.1 privacy + connection security + profile lifecycle
+WebCom v2 for Windows
 
-WHAT IS NEW IN 0.5.1
-- Site information now shows secure HTTPS, insecure HTTP, or certificate-problem state.
-- Current-site cookie count and a native cookie details box are available from the shield menu.
-- Cookie details show names/domain/path/Secure/HttpOnly flags but never cookie values.
-- Clear cookies for this site removes WebView2 cookies matching the active site.
-- Delete current profile permanently removes the WebView2 profile plus WebCom-owned local metadata.
-- WebCom refuses to delete the last profile or a profile with an active download.
-- Existing per-site Camera, Microphone, Location and Notifications controls remain.
-- Existing recent-download toolbar bubble remains.
+NEW CONTRIBUTORS / GITHUB USERS
+1. Read HOW_TO_BUILD.md
+2. Install Visual Studio 2022 C++ Build Tools + Windows SDK + CMake/Ninja
+3. Run build.cmd
+4. Run run.cmd after the build succeeds
 
-WINDOWS BASELINE
-The 0.4.7.4 lineage was confirmed by the user to compile successfully with MSVC on Windows.
-0.5.1 keeps the SDK restore, COM-header and MSVC compatibility fixes from that lineage.
+QUICK OUTPUT
+dist\WebCom\WebCom.exe
 
-BUILD THIS SOURCE ON WINDOWS
-Install Visual Studio Build Tools with Desktop development with C++, a Windows SDK,
-and CMake tools. In this folder run:
-    build.cmd
-    run.cmd
+BUILD HELP
+Every build writes build-last.log. If compilation fails, report the first compiler/linker error block from that file.
 
-The Microsoft WebView2 Evergreen Runtime must be installed for real web pages.
-If the build fails, send build-last.log.
-
-VALIDATION STATUS
-Portable validation: 10/10 suites, 605 checks, 0 failures and 0 warnings under GCC and Clang.
-The new CookieManager/Profile8/security-state paths still need Windows compile/live acceptance.
-
-EVERYDAY CONTROLS
-Ctrl+T new tab | Ctrl+Shift+N Incognito | Ctrl+L address bar
-Ctrl+H History | Ctrl+J Downloads | Ctrl+Shift+O Bookmark Manager
-Ctrl+Shift+A search open tabs | Ctrl+D save/remove bookmark
-Ctrl+Shift+B bookmarks bar | Ctrl+W close tab | Ctrl+Shift+T reopen tab
-Ctrl+Shift+PgUp/PgDn reorder tab | Shift+Esc memory snapshot | F12 developer tools
+PROJECT STATUS
+WebCom v2 is a public-beta native C++20/Win32 browser using Microsoft Edge WebView2 for web rendering. See README.md for the project goal and feature overview, and docs/PUBLIC-BETA-CHECKLIST-v2.md for release acceptance.

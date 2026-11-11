@@ -74,6 +74,100 @@ std::string PercentEncode(std::string_view input) {
     return result;
 }
 
+
+AddressResult Reject(std::string message);
+AddressResult Accept(std::string url);
+
+std::string EncodeUrlSpaces(std::string_view input);
+
+bool IsSupportedLocalExtension(std::string_view path) {
+    const auto slash = path.find_last_of('/');
+    const auto dot = path.find_last_of('.');
+    if (dot == std::string_view::npos || (slash != std::string_view::npos && dot < slash) || dot + 1 >= path.size())
+        return false;
+    const auto extension = path.substr(dot);
+    return EqualsIgnoreCase(extension, ".html") || EqualsIgnoreCase(extension, ".htm") ||
+           EqualsIgnoreCase(extension, ".pdf");
+}
+
+bool DecodeFilePath(std::string_view encoded, std::string& decoded) {
+    decoded.clear();
+    decoded.reserve(encoded.size());
+    for (std::size_t i = 0; i < encoded.size(); ++i) {
+        unsigned char byte = static_cast<unsigned char>(encoded[i]);
+        if (encoded[i] == '%') {
+            if (i + 2 >= encoded.size()) return false;
+            const int high = HexValue(encoded[i + 1]);
+            const int low = HexValue(encoded[i + 2]);
+            if (high < 0 || low < 0) return false;
+            byte = static_cast<unsigned char>((high << 4) | low);
+            i += 2;
+        }
+        if (byte == 0 || byte < 0x20 || byte == 0x7f || byte == '\\') return false;
+        decoded.push_back(static_cast<char>(byte));
+    }
+    return true;
+}
+
+bool SafeLocalPath(std::string_view path) {
+    if (path.size() < 4 || !IsAsciiAlpha(path[0]) || path[1] != ':' || path[2] != '/') return false;
+    if (path.find('?') != std::string_view::npos) return false;
+    if (path.find(':', 2) != std::string_view::npos) return false;
+    std::size_t start = 3;
+    while (start <= path.size()) {
+        const auto slash = path.find('/', start);
+        const auto segment = path.substr(start, slash == std::string_view::npos ? path.size() - start : slash - start);
+        if (segment == "." || segment == "..") return false;
+        if (slash == std::string_view::npos) break;
+        if (slash == start) return false;
+        start = slash + 1;
+    }
+    return IsSupportedLocalExtension(path);
+}
+
+std::string EncodeLocalPath(std::string_view path) {
+    constexpr char digits[] = "0123456789ABCDEF";
+    std::string result;
+    result.reserve(path.size() + 16);
+    for (const unsigned char c : path) {
+        if (IsUnreserved(c) || c == '/' || c == ':') result.push_back(static_cast<char>(c));
+        else {
+            result.push_back('%');
+            result.push_back(digits[c >> 4]);
+            result.push_back(digits[c & 15]);
+        }
+    }
+    return result;
+}
+
+AddressResult ResolveLocalFile(std::string_view input) {
+    if (input.size() >= 8 && EqualsIgnoreCase(input.substr(0, 8), "file:///")) {
+        const auto rest = input.substr(8);
+        if (rest.find('?') != std::string_view::npos)
+            return Reject("Local file URLs do not support query strings in WebCom.");
+        const auto hash = rest.find('#');
+        const auto encoded_path = rest.substr(0, hash);
+        const auto fragment = hash == std::string_view::npos ? std::string_view{} : rest.substr(hash + 1);
+        for (unsigned char c : fragment) if (c < 0x20 || c == 0x7f || c == '\\')
+            return Reject("The local-file fragment contains unsupported text.");
+        std::string decoded;
+        if (!DecodeFilePath(encoded_path, decoded) || !SafeLocalPath(decoded))
+            return Reject("Open a local HTML or PDF file from a local drive. Network paths and traversal segments are blocked.");
+        auto canonical = "file:///" + EncodeLocalPath(decoded);
+        if (hash != std::string_view::npos) canonical += "#" + EncodeUrlSpaces(fragment);
+        return Accept(std::move(canonical));
+    }
+    if (input.size() >= 3 && IsAsciiAlpha(input[0]) && input[1] == ':' &&
+        (input[2] == '/' || input[2] == '\\')) {
+        std::string path(input);
+        for (char& c : path) if (c == '\\') c = '/';
+        if (!SafeLocalPath(path))
+            return Reject("WebCom opens local .html, .htm and .pdf files from local drives.");
+        return Accept("file:///" + EncodeLocalPath(path));
+    }
+    return Reject("WebCom opens local .html, .htm and .pdf files from local drives.");
+}
+
 AddressResult Reject(std::string message) {
     return {{}, false, std::move(message)};
 }
@@ -286,8 +380,10 @@ AddressResult ResolveAddress(std::string_view input) {
         EqualsIgnoreCase(input, "webcom:newtab")) {
         return Accept("webcom:newtab");
     }
-    for (const char* page : {"webcom:history", "webcom:downloads", "webcom:settings",
-                             "webcom:bookmarks", "webcom:profiles"}) {
+    for (const char* page : {"webcom:welcome", "webcom:history", "webcom:downloads", "webcom:settings",
+                             "webcom:bookmarks", "webcom:profiles", "webcom:shortcuts",
+                             "webcom:diagnostics", "webcom:recovery", "webcom:updates", "webcom:extensions", "webcom:sessions",
+                             "webcom:privacy", "webcom:reader"}) {
         if (EqualsIgnoreCase(input, page)) return Accept(page);
     }
     for (unsigned char c : input) {
@@ -298,6 +394,11 @@ AddressResult ResolveAddress(std::string_view input) {
 
     const auto colon = input.find(':');
     const auto scheme = input.substr(0, colon);
+    if ((colon != std::string_view::npos && EqualsIgnoreCase(scheme, "file")) ||
+        (input.size() >= 3 && IsAsciiAlpha(input[0]) && input[1] == ':' &&
+         (input[2] == '/' || input[2] == '\\'))) {
+        return ResolveLocalFile(input);
+    }
     if (colon != std::string_view::npos &&
         (EqualsIgnoreCase(scheme, "http") || EqualsIgnoreCase(scheme, "https"))) {
         if (input.substr(colon, 3) != "://") {
@@ -353,6 +454,12 @@ AddressResult ResolveAddress(std::string_view input) {
         return Reject("Enter a valid website address and port.");
     }
     return Accept("https://www.google.com/search?q=" + PercentEncode(input));
+}
+
+bool IsLocalFileAddress(std::string_view input) {
+    const auto resolved = ResolveAddress(input);
+    return resolved.allowed && resolved.url.size() >= 8 &&
+           EqualsIgnoreCase(resolved.url.substr(0, 8), "file:///");
 }
 
 std::string EscapeField(std::string_view input) { return PercentEncode(input); }

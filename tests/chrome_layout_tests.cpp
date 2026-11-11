@@ -92,6 +92,18 @@ int main() {
     Check(ChromeReflowAmount(80)>50 && ChromeReflowAmount(80)<100,"tab reflow uses ease-out motion");
     Check(ChromeReflowAmount(160)==100,"tab reflow finishes at duration");
     Check(ChromeReflowAmount(500)==100,"tab reflow remains complete after duration");
+    bool vertical_active_visible=true, vertical_bounded=true;
+    for(int height:{180,320,520,900,1600})for(std::size_t total:{1u,4u,20u,200u})
+        for(std::size_t active:{std::size_t{0},total/2,total-1})for(std::size_t first:{std::size_t{0},total/2,total+20}){
+            const auto plan=MakeChromeVerticalTabPlan(height,total,active,first);
+            vertical_active_visible &= std::any_of(plan.slots.begin(),plan.slots.end(),[&](const auto& slot){return slot.index==active;});
+            vertical_bounded &= plan.first<total && plan.slots.size()<=plan.capacity &&
+                std::all_of(plan.slots.begin(),plan.slots.end(),[&](const auto& slot){return slot.index<total && slot.bottom<=height+36;});
+        }
+    Check(vertical_active_visible,"vertical tabs keep the selected tab visible while scrolling");
+    Check(vertical_bounded,"vertical-tab slots stay bounded for large restored sessions");
+    const auto vertical_empty=MakeChromeVerticalTabPlan(320,0,9,99);
+    Check(vertical_empty.slots.empty(),"empty vertical strips remain safe");
     Check(MakeChromePrivateLayout(640,459).narrow,"narrow private pages stack their text columns");
     Check(!MakeChromePrivateLayout(820,459).narrow,"desktop private pages retain reference columns");
     const auto pinned=MakeChromeTabStripPlan(1200,7,2,5,2);

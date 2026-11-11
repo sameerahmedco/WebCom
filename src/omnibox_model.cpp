@@ -17,7 +17,8 @@ std::wstring Trim(std::wstring_view value) {
     return std::wstring(value.substr(first,last-first));
 }
 int MatchScore(const std::wstring& folded_query, const std::wstring& title, const std::wstring& url) {
-    const auto t=Fold(title),u=Fold(url);
+    const auto t = Fold(title);
+    const auto u = Fold(url);
     int score=-1;
     if(!folded_query.empty()) {
         if(u.starts_with(folded_query)) score=900;

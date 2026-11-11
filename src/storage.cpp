@@ -1,6 +1,7 @@
 #include "storage.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <charconv>
 #include <cstdio>
@@ -34,20 +35,28 @@ constexpr std::uintmax_t kMaxStateBytes = 4 * 1024 * 1024;
 constexpr std::size_t kMaxProfiles = 32;
 constexpr std::size_t kMaxTabsPerProfile = 200;
 constexpr std::size_t kMaxGroupsPerProfile = 64;
+constexpr std::size_t kMaxWorkspacesPerProfile = 32;
+constexpr std::size_t kMaxStartupPagesPerProfile = 16;
 constexpr std::size_t kMaxUrlBytes = 16384;
 constexpr std::size_t kMaxTitleBytes = 4096;
 constexpr std::string_view kHeaderV1 = "WEBCOM_STATE\t1";
 constexpr std::string_view kHeaderV2 = "WEBCOM_STATE\t2";
 constexpr std::string_view kHeaderV3 = "WEBCOM_STATE\t3";
+constexpr std::string_view kHeaderV4 = "WEBCOM_STATE\t4";
+constexpr std::string_view kHeaderV5 = "WEBCOM_STATE\t5";
+constexpr std::string_view kHeaderV6 = "WEBCOM_STATE\t6";
+constexpr std::string_view kHeaderV7 = "WEBCOM_STATE\t7";
 constexpr std::string_view kNewTabUrl = "webcom:newtab";
 
-// Version 3 is UTF-8 text with LF line endings. All strings are byte-preserving
+// Version 7 is UTF-8 text with LF line endings. All strings are byte-preserving
 // percent-escaped with EscapeField. Records have a fixed field count:
-// WEBCOM_STATE <TAB> 3 (loader also accepts versions 1 and 2)
+// WEBCOM_STATE <TAB> 7 (loader also accepts versions 1 through 6)
 // settings <TAB> balanced|saver <TAB> 0|1 <TAB> active-profile
-// profile <TAB> profile-name <TAB> active-tab-index
+// profile <TAB> profile-name <TAB> active-tab-index <TAB> save-passwords <TAB> general-autofill <TAB> active-workspace <TAB> 0|1(vertical-tabs) <TAB> 0|1(collapsed-rail) <TAB> continue|newtab|pages
+// startuppage <TAB> complete-http(s)-url
+// workspace <TAB> workspace-name <TAB> color-index(0..7)
 // group <TAB> group-name <TAB> color-index(0..7) <TAB> 0|1(collapsed)
-// tab <TAB> 0|1(pinned) <TAB> 0|1(keep-awake) <TAB> url <TAB> title <TAB> group-name
+// tab <TAB> 0|1(pinned) <TAB> 0|1(keep-awake) <TAB> url <TAB> title <TAB> group-name <TAB> workspace-name
 // endprofile
 // ... more profiles ...
 // end
@@ -68,7 +77,8 @@ std::string LowerAscii(std::string_view value) {
 
 AppState DefaultState() {
     AppState state;
-    state.profiles.push_back({"Default", {{std::string(kNewTabUrl), "New tab", false, false, ""}}, 0, {}});
+    state.profiles.push_back({"Default", {{std::string(kNewTabUrl), "New tab", false, false, ""}}, 0, {},
+        true, true, {{"Main",0}}, "Main", false, false, StartupMode::Continue, {}});
     return state;
 }
 
@@ -111,15 +121,23 @@ bool IsValidTitle(std::string_view title) {
 }
 
 bool IsRestorableUrl(std::string_view url) {
-    if (url == kNewTabUrl || url == "webcom:history" || url == "webcom:downloads" ||
-        url == "webcom:settings" || url == "webcom:bookmarks" || url == "webcom:profiles") return true;
+    constexpr std::array<const char*, 14> internal_pages{
+        "webcom:newtab", "webcom:welcome", "webcom:history", "webcom:downloads",
+        "webcom:settings", "webcom:shortcuts", "webcom:diagnostics", "webcom:recovery", "webcom:updates", "webcom:extensions",
+        "webcom:bookmarks", "webcom:profiles", "webcom:sessions", "webcom:privacy"
+    };
+    for (const char* page : internal_pages) if (url == page) return true;
     if (url.empty() || url.size() > kMaxUrlBytes || !IsValidUtf8(url)) return false;
-    // Guard before invoking the omnibox validator: a damaged entry may never
-    // become a search query, an inferred hostname, or an operating-system URL.
-    if (!url.starts_with("https://") && !url.starts_with("http://")) return false;
     for (unsigned char c : url) {
         if (c <= 0x20 || c == 0x7F || c == '\\') return false;
     }
+    if (url.starts_with("file:///")) {
+        const auto validated = ResolveAddress(url);
+        return IsLocalFileAddress(url) && validated.allowed && validated.url == url;
+    }
+    // Guard before invoking the omnibox validator: a damaged entry may never
+    // become a search query, an inferred hostname, or an operating-system URL.
+    if (!url.starts_with("https://") && !url.starts_with("http://")) return false;
     const auto authorityStart = url.find("://") + 3;
     const auto authorityEnd = url.find_first_of("/?#", authorityStart);
     const auto authority = url.substr(authorityStart, authorityEnd - authorityStart);
@@ -164,6 +182,39 @@ bool NormalizeAndValidate(AppState& state, std::string* error) {
         }
         if (profile.active_tab >= profile.tabs.size())
             return Fail(error, "The active tab index is out of range.");
+        std::unordered_set<std::string> workspace_names;
+        if (profile.workspaces.empty()) profile.workspaces.push_back({"Main", 0});
+        if (profile.workspaces.size() > kMaxWorkspacesPerProfile)
+            return Fail(error, "At most 32 workspaces per profile can be saved.");
+        for (const auto& workspace : profile.workspaces) {
+            if (workspace.name.empty() || workspace.name.size() > 80 || !IsValidTitle(workspace.name))
+                return Fail(error, "A workspace name is invalid or exceeds 80 UTF-8 bytes.");
+            if (workspace.color > 7)
+                return Fail(error, "A workspace color index is invalid.");
+            if (!workspace_names.insert(LowerAscii(workspace.name)).second)
+                return Fail(error, "Workspace names must be unique ignoring letter case.");
+        }
+        if (profile.active_workspace.empty()) profile.active_workspace = profile.workspaces.front().name;
+        const auto active_workspace_key = LowerAscii(profile.active_workspace);
+        const auto active_workspace = std::find_if(profile.workspaces.begin(), profile.workspaces.end(), [&](const SavedWorkspace& workspace) {
+            return LowerAscii(workspace.name) == active_workspace_key;
+        });
+        if (active_workspace == profile.workspaces.end())
+            return Fail(error, "The active workspace does not exist.");
+        profile.active_workspace = active_workspace->name;
+        if (profile.startup_mode != StartupMode::Continue && profile.startup_mode != StartupMode::NewTab &&
+            profile.startup_mode != StartupMode::SpecificPages)
+            return Fail(error, "Unknown startup mode.");
+        if (profile.startup_pages.size() > kMaxStartupPagesPerProfile)
+            return Fail(error, "At most 16 startup pages per profile can be saved.");
+        std::unordered_set<std::string> startup_urls;
+        for (const auto& url : profile.startup_pages) {
+            if ((!url.starts_with("https://") && !url.starts_with("http://")) || !IsRestorableUrl(url))
+                return Fail(error, "A startup page must be a complete HTTP(S) address without credentials.");
+            if (!startup_urls.insert(LowerAscii(url)).second)
+                return Fail(error, "Startup pages must be unique ignoring letter case.");
+        }
+
         std::unordered_set<std::string> group_names;
         if (profile.groups.size() > kMaxGroupsPerProfile)
             return Fail(error, "At most 64 tab groups per profile can be saved.");
@@ -185,9 +236,20 @@ bool NormalizeAndValidate(AppState& state, std::string* error) {
                 return Fail(error, "A tab group name is invalid or exceeds 80 UTF-8 bytes.");
             if (!tab.group.empty() && !group_names.empty() && group_names.find(LowerAscii(tab.group)) == group_names.end())
                 return Fail(error, "A tab references a tab group that is not defined.");
+            if (tab.workspace.empty() || tab.workspace.size() > 80 || !IsValidTitle(tab.workspace))
+                return Fail(error, "A tab workspace name is invalid or exceeds 80 UTF-8 bytes.");
+            const auto workspace = std::find_if(profile.workspaces.begin(), profile.workspaces.end(), [&](const SavedWorkspace& item) {
+                return LowerAscii(item.name) == LowerAscii(tab.workspace);
+            });
+            if (workspace == profile.workspaces.end())
+                return Fail(error, "A tab references a workspace that is not defined.");
         }
     }
-    return activeFound || Fail(error, "The active profile does not exist.");
+    if (!activeFound) return Fail(error, "The active profile does not exist.");
+    const auto active = std::find_if(state.profiles.begin(), state.profiles.end(),
+        [&](const SavedProfile& profile) { return LowerAscii(profile.name) == LowerAscii(state.active_profile); });
+    if (active != state.profiles.end()) state.save_passwords = active->save_passwords;
+    return true;
 }
 
 std::vector<std::string_view> Fields(std::string_view line) {
@@ -195,9 +257,9 @@ std::vector<std::string_view> Fields(std::string_view line) {
     while (true) {
         const auto end = line.find('\t');
         fields.push_back(line.substr(0, end));
-        // No record permits more than six fields. Bound allocations even for a
+        // No record permits more than nine fields. Bound allocations even for a
         // corrupted file consisting mostly of tab separators.
-        if (end == std::string_view::npos || fields.size() > 6) return fields;
+        if (end == std::string_view::npos || fields.size() > 9) return fields;
         line.remove_prefix(end + 1);
     }
 }
@@ -238,6 +300,10 @@ bool ParseState(std::string_view text, AppState& result) {
             if (line == kHeaderV1) version = 1;
             else if (line == kHeaderV2) version = 2;
             else if (line == kHeaderV3) version = 3;
+            else if (line == kHeaderV4) version = 4;
+            else if (line == kHeaderV5) version = 5;
+            else if (line == kHeaderV6) version = 6;
+            else if (line == kHeaderV7) version = 7;
             else return false;
             header = true;
             continue;
@@ -252,13 +318,52 @@ bool ParseState(std::string_view text, AppState& result) {
                 !Decode(fields[3], 40, result.active_profile)) return false;
             settings = true;
         } else if (fields[0] == "profile") {
-            if (current || fields.size() != 3 || result.profiles.size() >= kMaxProfiles)
+            const std::size_t expected = version >= 7 ? 9 : version >= 6 ? 8 : version >= 5 ? 7 : version >= 4 ? 5 : 3;
+            if (current || fields.size() != expected || result.profiles.size() >= kMaxProfiles)
                 return false;
             SavedProfile profile;
             if (!Decode(fields[1], 40, profile.name) ||
                 !ParseIndex(fields[2], profile.active_tab)) return false;
+            if (version >= 4) {
+                if (!ParseFlag(fields[3], profile.save_passwords) ||
+                    !ParseFlag(fields[4], profile.general_autofill)) return false;
+            } else {
+                profile.save_passwords = result.save_passwords;
+                profile.general_autofill = true;
+            }
+            if (version >= 5) {
+                if (!Decode(fields[5], 80, profile.active_workspace) ||
+                    !ParseFlag(fields[6], profile.vertical_tabs)) return false;
+                if (version >= 6 && !ParseFlag(fields[7], profile.vertical_tabs_collapsed)) return false;
+                if (version >= 7) {
+                    if (fields[8] == "continue") profile.startup_mode = StartupMode::Continue;
+                    else if (fields[8] == "newtab") profile.startup_mode = StartupMode::NewTab;
+                    else if (fields[8] == "pages") profile.startup_mode = StartupMode::SpecificPages;
+                    else return false;
+                } else profile.startup_mode = StartupMode::Continue;
+                profile.workspaces.clear();
+            } else {
+                profile.active_workspace = "Main";
+                profile.vertical_tabs = false;
+                profile.vertical_tabs_collapsed = false;
+            }
             result.profiles.push_back(std::move(profile));
             current = &result.profiles.back();
+        } else if (fields[0] == "startuppage") {
+            if (version < 7 || !current || fields.size() != 2 || current->startup_pages.size() >= kMaxStartupPagesPerProfile)
+                return false;
+            std::string url;
+            if (!Decode(fields[1], kMaxUrlBytes, url)) return false;
+            current->startup_pages.push_back(std::move(url));
+        } else if (fields[0] == "workspace") {
+            if (version < 5 || !current || fields.size() != 3 || current->workspaces.size() >= kMaxWorkspacesPerProfile)
+                return false;
+            SavedWorkspace workspace;
+            std::size_t color = 0;
+            if (!Decode(fields[1], 80, workspace.name) || workspace.name.empty() ||
+                !ParseIndex(fields[2], color) || color > 7) return false;
+            workspace.color = static_cast<std::uint8_t>(color);
+            current->workspaces.push_back(std::move(workspace));
         } else if (fields[0] == "group") {
             if (version < 3 || !current || fields.size() != 4 || current->groups.size() >= kMaxGroupsPerProfile)
                 return false;
@@ -270,7 +375,7 @@ bool ParseState(std::string_view text, AppState& result) {
             group.color = static_cast<std::uint8_t>(color);
             current->groups.push_back(std::move(group));
         } else if (fields[0] == "tab") {
-            const std::size_t expected = version >= 2 ? 6 : 5;
+            const std::size_t expected = version >= 5 ? 7 : version >= 2 ? 6 : 5;
             if (!current || fields.size() != expected || current->tabs.size() >= kMaxTabsPerProfile)
                 return false;
             SavedTab tab;
@@ -278,6 +383,8 @@ bool ParseState(std::string_view text, AppState& result) {
                 !Decode(fields[3], kMaxUrlBytes, tab.url) ||
                 !Decode(fields[4], kMaxTitleBytes, tab.title)) return false;
             if (version >= 2 && !Decode(fields[5], 80, tab.group)) return false;
+            if (version >= 5) { if (!Decode(fields[6], 80, tab.workspace)) return false; }
+            else tab.workspace = "Main";
             current->tabs.push_back(std::move(tab));
         } else if (fields[0] == "endprofile") {
             if (!current || fields.size() != 1) return false;
@@ -293,12 +400,25 @@ bool ParseState(std::string_view text, AppState& result) {
 }
 
 bool SerializeState(const AppState& state, std::string& output, std::string* error) {
-    output = std::string(kHeaderV3) + "\nsettings\t" +
+    output = std::string(kHeaderV7) + "\nsettings\t" +
         (state.memory_mode == MemoryMode::Saver ? "saver" : "balanced") + "\t" +
         (state.save_passwords ? "1" : "0") + "\t" + EscapeField(state.active_profile) + "\n";
     for (const auto& profile : state.profiles) {
         output += "profile\t" + EscapeField(profile.name) + "\t" +
-                  std::to_string(profile.active_tab) + "\n";
+                  std::to_string(profile.active_tab) + "\t" +
+                  (profile.save_passwords ? "1" : "0") + "\t" +
+                  (profile.general_autofill ? "1" : "0") + "\t" +
+                  EscapeField(profile.active_workspace) + "\t" +
+                  (profile.vertical_tabs ? "1" : "0") + "\t" +
+                  (profile.vertical_tabs_collapsed ? "1" : "0") + "\t" +
+                  (profile.startup_mode == StartupMode::NewTab ? "newtab" :
+                   profile.startup_mode == StartupMode::SpecificPages ? "pages" : "continue") + "\n";
+        for (const auto& page : profile.startup_pages)
+            output += "startuppage\t" + EscapeField(page) + "\n";
+        for (const auto& workspace : profile.workspaces) {
+            output += "workspace\t" + EscapeField(workspace.name) + "\t" +
+                      std::to_string(static_cast<unsigned>(workspace.color)) + "\n";
+        }
         for (const auto& group : profile.groups) {
             output += "group\t" + EscapeField(group.name) + "\t" +
                       std::to_string(static_cast<unsigned>(group.color)) + "\t" +
@@ -307,7 +427,8 @@ bool SerializeState(const AppState& state, std::string& output, std::string* err
         for (const auto& tab : profile.tabs) {
             output += std::string("tab\t") + (tab.pinned ? "1" : "0") + "\t" +
                       (tab.keep_awake ? "1" : "0") + "\t" + EscapeField(tab.url) +
-                      "\t" + EscapeField(tab.title) + "\t" + EscapeField(tab.group) + "\n";
+                      "\t" + EscapeField(tab.title) + "\t" + EscapeField(tab.group) +
+                      "\t" + EscapeField(tab.workspace) + "\n";
             if (output.size() > kMaxStateBytes)
                 return Fail(error, "Session metadata exceeds the 4 MiB limit.");
         }
@@ -437,6 +558,21 @@ bool RemoveProfile(AppState& state, std::string_view profile, std::string* error
     return true;
 }
 
+void ResetRecoveredSessionTabs(AppState& state) {
+    for (auto& profile : state.profiles) {
+        if (profile.workspaces.empty()) profile.workspaces.push_back({"Main", 0});
+        const auto active = std::find_if(profile.workspaces.begin(), profile.workspaces.end(),
+            [&](const SavedWorkspace& workspace) {
+                return LowerAscii(workspace.name) == LowerAscii(profile.active_workspace);
+            });
+        if (active == profile.workspaces.end()) profile.active_workspace = profile.workspaces.front().name;
+        profile.tabs.clear();
+        profile.groups.clear();
+        profile.tabs.push_back({"webcom:newtab", "New tab", false, false, "", profile.active_workspace});
+        profile.active_tab = 0;
+    }
+}
+
 bool SaveState(const std::filesystem::path& root, const AppState& state,
                std::string* error) {
     if (error) error->clear();
@@ -493,6 +629,17 @@ bool SaveStateAfterProfileDeletion(const std::filesystem::path& root, const AppS
     std::string backup_error;
     if(!SaveState(root,state,&backup_error)){
         std::error_code ec;std::filesystem::remove(root / "state.v1.bak",ec);
+    }
+    return true;
+}
+
+bool SaveStateAfterRecoveryReset(const std::filesystem::path& root, const AppState& state,
+                                 std::string* error) {
+    if (!SaveState(root, state, error)) return false;
+    std::string backup_error;
+    if (!SaveState(root, state, &backup_error)) {
+        std::error_code ec;
+        std::filesystem::remove(root / "state.v1.bak", ec);
     }
     return true;
 }

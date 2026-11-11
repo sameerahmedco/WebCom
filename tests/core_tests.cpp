@@ -42,10 +42,17 @@ int main() {
     Address("about:blank", "webcom:newtab");
     Address(" WEBCOM:NEWTAB ", "webcom:newtab");
     Address("webcom:history", "webcom:history");
+    Address("webcom:welcome", "webcom:welcome");
+    Address("WEBCOM:DIAGNOSTICS", "webcom:diagnostics");
+    Address("webcom:updates", "webcom:updates");
+    Address("webcom:extensions", "webcom:extensions");
+    Address("webcom:recovery", "webcom:recovery");
+    Address("webcom:privacy", "webcom:privacy");
     Address("WEBCOM:DOWNLOADS", "webcom:downloads");
     Address(" webcom:settings ", "webcom:settings");
     Address("webcom:bookmarks", "webcom:bookmarks");
     Address("WEBCOM:PROFILES", "webcom:profiles");
+    Address("webcom:shortcuts", "webcom:shortcuts");
     Address("example.com", "https://example.com");
     Address(" HTTPS://Example.com/a b?q=x y#z ",
             "https://Example.com/a%20b?q=x%20y#z");
@@ -86,10 +93,29 @@ int main() {
     Address("https://example.com:65535/", "https://example.com:65535/");
     Address("https://example.com:0/", "https://example.com:0/");
 
+    Address("C:\\Users\\Example\\page.html", "file:///C:/Users/Example/page.html");
+    Address("D:/Docs/My File.PDF", "file:///D:/Docs/My%20File.PDF");
+    Address("file:///C:/Sites/index.htm", "file:///C:/Sites/index.htm");
+    Address("file:///C:/Sites/My%20Page.html", "file:///C:/Sites/My%20Page.html");
+    Address("file:///C:/Sites/%E2%98%83.html", "file:///C:/Sites/%E2%98%83.html");
+    Address("file:///C:/Docs/Guide.pdf#page=2", "file:///C:/Docs/Guide.pdf#page=2");
+    Address("C:\\Sites\\chapter#1.html", "file:///C:/Sites/chapter%231.html");
+    Check(IsLocalFileAddress("file:///C:/Sites/index.html"), "canonical local file recognized");
+    Check(IsLocalFileAddress("C:\\Sites\\index.html"), "Windows path recognized as local file");
+    Check(!IsLocalFileAddress("https://example.com/index.html"), "website is not a local file");
+
     Rejected("javascript:alert(1)");
     Rejected("JaVaScRiPt:123");
     Rejected("data:text/html,<script>alert(1)</script>");
     Rejected("file:///C:/secret.txt");
+    Rejected("file://server/share/index.html");
+    Rejected("file:///C:/Sites/../secret.html");
+    Rejected("C:\\Sites\\..\\secret.html");
+    Rejected("file:///C:/Sites/page.exe");
+    Rejected("file:///C:/Sites/page.html?query=1");
+    Rejected("file:///C:/Sites/%2e%2e/secret.html");
+    Rejected("file:///C:/Sites/%ZZ.html");
+    Rejected("C:\\Sites\\page.txt");
     Rejected("mailto:someone@example.com");
     Rejected("mailto:80");
     Rejected("ftp://example.com/");

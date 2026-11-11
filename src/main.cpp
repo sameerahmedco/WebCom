@@ -76,11 +76,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
     }
     if (show_help) {
         MessageBoxW(nullptr,
-            L"WebCom [URL]\nWebCom --private [URL]\nWebCom --profile Work [URL]\nWebCom --url https://example.com\n\n"
+            L"WebCom [URL or local HTML/PDF]\nWebCom --private [URL]\nWebCom --profile Work [URL]\nWebCom --url https://example.com\n\n"
             L"--profile opens or focuses a separate window for that profile. New names create a local profile.\n"
             L"--private opens a private tab in the selected profile's window.\n"
-            L"Search text uses Google. Quote phrases containing spaces.\n\n"
-            L"Ctrl+T: new tab   Ctrl+L: address   Ctrl+W: close tab",
+            L"Search text uses Google. Local .html, .htm and .pdf files can be opened by path or Ctrl+O.\nQuote phrases containing spaces.\n\n"
+            L"Ctrl+T: new tab   Ctrl+O: open file   Ctrl+L: address   Ctrl+W: close tab",
             L"WebCom", MB_OK | MB_ICONINFORMATION);
         return 0;
     }

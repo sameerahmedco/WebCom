@@ -24,6 +24,8 @@ namespace {
 constexpr std::size_t MaxTitle = 1024, MaxUrl = 16384, MaxFolder = 256, MaxBytes = 6 * 1024 * 1024;
 constexpr std::string_view HeaderV1 = "WEBCOM_BOOKMARKS\t1\n";
 constexpr std::string_view HeaderV2 = "WEBCOM_BOOKMARKS\t2\n";
+constexpr std::string_view FolderHeaderV1 = "WEBCOM_BOOKMARK_FOLDERS\t1\n";
+constexpr std::size_t MaxExplicitFolders = 100;
 
 bool Fail(std::string* error, const std::string& message) { if (error) *error = message; return false; }
 std::vector<Bookmark> Defaults() {
@@ -34,6 +36,15 @@ std::filesystem::path File(const std::filesystem::path& root, std::string_view p
     std::string name(profile);
     for (char& c : name) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
     return root / "Bookmarks" / (name + ".v1");
+}
+std::filesystem::path FolderFile(const std::filesystem::path& root, std::string_view profile) {
+    std::string name(profile);
+    for (char& c : name) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+    return root / "BookmarkFolders" / (name + ".v1");
+}
+std::string LowerAscii(std::string value) {
+    for (char& c : value) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+    return value;
 }
 bool Utf8(std::string_view s) {
     for (std::size_t i = 0; i < s.size();) {
@@ -184,7 +195,34 @@ std::vector<std::string> BookmarkFolderPaths(const std::vector<Bookmark>& bookma
     }
     std::stable_sort(result.begin(), result.end(), [](const std::string& a, const std::string& b) {
         const auto depth = [](const std::string& value) { return std::count(value.begin(), value.end(), '/'); };
-        const auto da = depth(a), db = depth(b);
+        const auto da = depth(a);
+        const auto db = depth(b);
+        if (da != db) return da < db;
+        return a < b;
+    });
+    return result;
+}
+
+std::vector<std::string> BookmarkFolderPaths(const std::vector<Bookmark>& bookmarks,
+                                             const std::vector<std::string>& explicit_folders,
+                                             bool include_ancestors) {
+    auto result = BookmarkFolderPaths(bookmarks, include_ancestors);
+    auto add_path = [&](std::string path) {
+        path = NormalizeBookmarkFolderPath(path);
+        if (path.empty()) return;
+        while (true) {
+            if (std::find(result.begin(), result.end(), path) == result.end()) result.push_back(path);
+            if (!include_ancestors) break;
+            const auto slash = path.rfind('/');
+            if (slash == std::string::npos) break;
+            path.resize(slash);
+        }
+    };
+    for (const auto& folder : explicit_folders) add_path(folder);
+    std::stable_sort(result.begin(), result.end(), [](const std::string& a, const std::string& b) {
+        const auto depth = [](const std::string& value) { return std::count(value.begin(), value.end(), '/'); };
+        const auto da = depth(a);
+        const auto db = depth(b);
         if (da != db) return da < db;
         return a < b;
     });
@@ -208,6 +246,91 @@ bool RenameBookmarkFolder(std::vector<Bookmark>& bookmarks, std::string_view old
         }
     }
     return changed;
+}
+
+std::vector<std::string> LoadBookmarkFolders(const std::filesystem::path& root, std::string_view profile) {
+    if (!IsValidProfileName(profile) || root.empty() || !root.is_absolute()) return {};
+    try {
+        const auto path = FolderFile(root, profile); std::error_code error;
+        const auto size = std::filesystem::file_size(path, error);
+        if (error) return {};
+        if (size > MaxBytes) return {};
+        std::ifstream stream(path, std::ios::binary); std::string text(static_cast<std::size_t>(size), '\0');
+        if (!stream || !stream.read(text.data(), static_cast<std::streamsize>(size)) || stream.peek()!=std::char_traits<char>::eof()) return {};
+        if (!text.starts_with(FolderHeaderV1) || !text.ends_with("end\n")) return {};
+        std::string_view rows(text); rows.remove_prefix(FolderHeaderV1.size()); rows.remove_suffix(4);
+        std::vector<std::string> folders; std::vector<std::string> keys;
+        while (!rows.empty()) {
+            const auto end=rows.find('\n'); if (end==std::string_view::npos || folders.size()>=MaxExplicitFolders) return {};
+            const auto row=rows.substr(0,end); rows.remove_prefix(end+1);
+            const auto decoded=UnescapeField(row); const auto normalized=NormalizeBookmarkFolderPath(decoded);
+            if (normalized.empty() || normalized!=decoded || EscapeField(decoded)!=row) return {};
+            const auto key=LowerAscii(normalized);
+            if (std::find(keys.begin(),keys.end(),key)!=keys.end()) return {};
+            keys.push_back(key); folders.push_back(normalized);
+        }
+        return folders;
+    } catch (const std::exception&) { return {}; }
+}
+
+bool SaveBookmarkFolders(const std::filesystem::path& root, std::string_view profile,
+                         const std::vector<std::string>& folders, std::string* error) {
+    if (error) error->clear();
+    try {
+        if (!IsValidProfileName(profile)) return Fail(error,"Invalid bookmark-folder profile name.");
+        if (root.empty() || !root.is_absolute()) return Fail(error,"The bookmark-folder root must be absolute.");
+        if (folders.size()>MaxExplicitFolders) return Fail(error,"A profile can contain at most 100 bookmark folders.");
+        std::string content(FolderHeaderV1); std::vector<std::string> keys;
+        for (const auto& raw : folders) {
+            const auto normalized=NormalizeBookmarkFolderPath(raw);
+            if (normalized.empty() || normalized!=raw) return Fail(error,"A bookmark folder path is invalid or not canonical.");
+            const auto key=LowerAscii(normalized);
+            if (std::find(keys.begin(),keys.end(),key)!=keys.end()) return Fail(error,"Bookmark folder paths must be unique ignoring case.");
+            keys.push_back(key); content+=EscapeField(normalized)+'\n';
+        }
+        content+="end\n"; if (content.size()>MaxBytes) return Fail(error,"The bookmark-folder file is too large.");
+        const auto destination=FolderFile(root,profile); std::error_code ec; std::filesystem::create_directories(destination.parent_path(),ec);
+        if (ec) return Fail(error,"Cannot create the bookmark-folder directory: "+ec.message());
+        return AtomicWrite(destination,content,error);
+    } catch (const std::exception& ex) { return Fail(error,std::string("Cannot save bookmark folders: ")+ex.what()); }
+}
+
+bool AddBookmarkFolder(std::vector<std::string>& folders, std::string path) {
+    path=NormalizeBookmarkFolderPath(path); if (path.empty()) return false;
+    const auto key=LowerAscii(path);
+    if (std::any_of(folders.begin(),folders.end(),[&](const std::string& item){return LowerAscii(item)==key;})) return false;
+    if (folders.size()>=MaxExplicitFolders) return false;
+    folders.push_back(std::move(path)); return true;
+}
+
+bool RenameBookmarkFolderPath(std::vector<std::string>& folders, std::vector<Bookmark>& bookmarks,
+                              std::string_view old_path, std::string_view new_path) {
+    const auto old_folder=NormalizeBookmarkFolderPath(old_path);
+    const auto new_folder=NormalizeBookmarkFolderPath(new_path);
+    if (old_folder.empty() || new_folder.empty() || old_folder==new_folder) return false;
+    if (new_folder.size()>old_folder.size() && new_folder.starts_with(old_folder) && new_folder[old_folder.size()]=='/') return false;
+    const auto new_key=LowerAscii(new_folder);
+    for (const auto& folder : folders) {
+        if (LowerAscii(folder)==new_key && LowerAscii(folder)!=LowerAscii(old_folder)) return false;
+    }
+    bool changed=RenameBookmarkFolder(bookmarks,old_folder,new_folder);
+    for (auto& folder : folders) {
+        if (folder==old_folder) { folder=new_folder; changed=true; }
+        else if (folder.size()>old_folder.size() && folder.starts_with(old_folder) && folder[old_folder.size()]=='/') {
+            folder=new_folder+folder.substr(old_folder.size()); changed=true;
+        }
+    }
+    return changed;
+}
+
+bool RemoveBookmarkFolder(std::vector<std::string>& folders, const std::vector<Bookmark>& bookmarks,
+                          std::string_view path) {
+    const auto folder=NormalizeBookmarkFolderPath(path); if (folder.empty()) return false;
+    for (const auto& bookmark : bookmarks)
+        if (bookmark.folder==folder || (bookmark.folder.size()>folder.size() && bookmark.folder.starts_with(folder) && bookmark.folder[folder.size()]=='/')) return false;
+    const auto before=folders.size();
+    std::erase_if(folders,[&](const std::string& item){return item==folder || (item.size()>folder.size() && item.starts_with(folder) && item[folder.size()]=='/');});
+    return folders.size()!=before;
 }
 
 std::vector<Bookmark> LoadBookmarks(const std::filesystem::path& root, std::string_view profile) {

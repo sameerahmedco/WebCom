@@ -274,9 +274,9 @@ int main() {
         DialogWatchdog dialog_watchdog;
         webcom::AppState seed;
         seed.profiles = {
-            {"Default", {{"webcom:newtab","Default one",false,false},{"webcom:newtab","Default two",false,false}},0},
+            {"Default", {{"webcom:newtab","Default one",false,false},{"webcom:newtab","Default two",false,false}},0,{},true,true,{{"Main",0}},"Main",false,false,webcom::StartupMode::Continue,{}},
             {"Work", {{"webcom:newtab","Work one",false,false},{"webcom:newtab","Work two",false,false},
-                      {"webcom:newtab","Work three",false,false}},0}
+                      {"webcom:newtab","Work three",false,false}},0,{},true,true,{{"Main",0}},"Main",false,false,webcom::StartupMode::Continue,{}}
         };
         Check(webcom::SaveState(temporary.path, seed), "seed isolated profile state");
         const webcom::Appearance default_appearance{webcom::BrowserTheme::Charcoal, 0xd8a573, false};

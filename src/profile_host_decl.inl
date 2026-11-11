@@ -15,6 +15,10 @@ public:
     void OpenAllProfiles(Impl* requester);
     void CloseOtherProfileWindows(Impl* keep);
     void FinalizeProfileDeletion(Impl* requester);
+    bool ForceRecoveredTabs() const { return force_recovered_tabs_; }
+    bool TakeFirstRunWelcome();
+    bool ClaimUpdateHealthOwner();
+    bool PreviousRuntimeUnclean() const { return previous_runtime_unclean_; }
     bool MoveTabToProfile(Impl* source, std::uint64_t tab_id, std::string_view target_profile);
     std::string ProfileForWindow(HWND window) const;
     void RequestEnvironment(const std::shared_ptr<Impl>& requester);
@@ -34,6 +38,11 @@ private:
     bool registry_dirty_ = false;
     bool saving_ = false;
     bool recovered_session_ = false;
+    bool force_recovered_tabs_ = false;
+    bool first_run_welcome_pending_ = false;
+    bool update_health_owner_claimed_ = false;
+    bool runtime_session_started_ = false;
+    bool previous_runtime_unclean_ = false;
 
     void DeliverEnvironment(const std::shared_ptr<Impl>& window, HRESULT error,
                             ICoreWebView2Environment* environment);

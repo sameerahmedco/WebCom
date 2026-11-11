@@ -1,7 +1,8 @@
-WebCom for Windows 0.5.1 source preview
+WebCom for Windows v2 public-beta hardening
 
-Windows baseline: the user confirmed the 0.4.7.4 lineage compiles successfully with MSVC; later source milestones preserve those build fixes.
-0.5.1 adds current-site cookie visibility/clearing, HTTPS/HTTP/certificate status in site information, and supported WebView2-backed profile deletion with WebCom metadata cleanup.
-Portable validation: GCC + Clang, 10/10 suites, 605 checks, 0 failures, 0 warnings.
-A 0.5.1 Windows executable was not built in this Linux environment.
-See docs/VALIDATION-0.5.1.md and docs/CHANGES-0.5.1.md.
+Source-only Windows C++ milestone.
+2.0.0 adds Stable/Beta prerelease policy enforcement, centralized rollback readiness, custom owner-drawn tab accessibility via MSAA, release ProductVersion/matrix verification, and repeatable memory regression budgets.
+It retains the 0.7.9 WebView2 unpacked-extension source-health workflow.
+Portable validation: 29/29 CTest targets passed with GCC and independently 29/29 with Clang; 943 behavioral checks plus 183 Windows/MSVC source-preflight checks = 1,126 explicit checks, all passing.
+A v2 Windows executable/MSAA/WebView2 runtime acceptance run was not built or executed in this Linux environment.
+See docs/VALIDATION-v2.md and docs/PUBLIC-BETA-CHECKLIST-v2.md.

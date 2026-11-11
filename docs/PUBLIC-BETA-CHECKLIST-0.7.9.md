@@ -1,0 +1,22 @@
+# WebCom 0.7.9 public-beta checklist
+
+- [ ] Fresh MSVC `build.cmd` succeeds after source preflight.
+- [ ] A Manifest V3 unpacked extension loads through WebView2.
+- [ ] First successful load/reload records a source baseline.
+- [ ] Details reports expected manifest capabilities and source scan counts.
+- [ ] Normal source edits/additions/removals produce **changed / reload recommended** after refresh.
+- [ ] Reload runs changed source and refreshes the source baseline.
+- [ ] Restart preserves the baseline/source mapping for the same profile.
+- [ ] Legacy schema-v1 source metadata loads and upgrades safely to schema v2 on save.
+- [ ] Missing/unreadable source folders report scan unavailable without a crash or destructive cleanup.
+- [ ] Open folder targets the recorded unpacked source.
+- [ ] A source dropped from WebView2's installed list remains visible under Known unpacked sources.
+- [ ] Reload source restores a recoverable known source.
+- [ ] Forget source removes only WebCom metadata and leaves source files/installed-extension state untouched.
+- [ ] Explicit installed-extension Remove still removes its saved mapping as intended.
+- [ ] Source mappings/stamps do not leak between profiles.
+- [ ] Profile deletion removes extension-source metadata.
+- [ ] Enable/disable/remove, recovery/bootstrap, updater, rollback and local-file smoke tests still behave correctly.
+- [ ] Direct Chrome Web Store installation is not advertised as supported.
+- [ ] Chrome-owned toolbar/icon/badge/popup limitations remain clearly disclosed.
+- [ ] Stable/Beta upgrade/downgrade behavior is tested on a clean Windows VM before public rollout.

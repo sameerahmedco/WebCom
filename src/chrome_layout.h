@@ -34,6 +34,36 @@ inline ChromeStripLayout MakeChromeStripLayout(int width, std::size_t total,
     return result;
 }
 
+struct ChromeVerticalTabSlot {
+    std::size_t index = 0;
+    int top = 0;
+    int bottom = 0;
+};
+
+struct ChromeVerticalTabPlan {
+    std::vector<ChromeVerticalTabSlot> slots;
+    std::size_t first = 0;
+    std::size_t capacity = 0;
+    int row_height = 42;
+};
+
+inline ChromeVerticalTabPlan MakeChromeVerticalTabPlan(int content_height, std::size_t total,
+                                                        std::size_t active, std::size_t first) {
+    ChromeVerticalTabPlan plan;
+    plan.capacity = static_cast<std::size_t>(std::max(1, (std::max(0, content_height) - 56) / plan.row_height));
+    if (!total) return plan;
+    active = std::min(active, total - 1);
+    const auto count = std::min(total, plan.capacity);
+    plan.first = total <= plan.capacity ? 0 : std::min(first, total - count);
+    if (active < plan.first) plan.first = active;
+    if (active >= plan.first + count) plan.first = active - count + 1;
+    for (std::size_t slot = 0; slot < count; ++slot) {
+        const int top = 48 + static_cast<int>(slot) * plan.row_height;
+        plan.slots.push_back({plan.first + slot, top, top + 36});
+    }
+    return plan;
+}
+
 inline unsigned ChromeHoverAmount(int index, int from, int to,
                                   unsigned long long elapsed_ms,
                                   unsigned duration_ms = 100) {

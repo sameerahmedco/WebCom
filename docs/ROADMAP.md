@@ -1,15 +1,12 @@
-# WebCom 0.5.1 continuation plan
+# WebCom v2 continuation plan
 
-0.5.1 completes the first useful site-information surface with security state, cookies/site data and permissions, and adds a supported profile deletion lifecycle.
+2.0.0 moves the Windows browser source into a stricter public-beta hardening phase. Portable policy and regression gates are in source; real Windows/MSVC/WebView2 acceptance remains release-decisive.
 
-## Next candidates
-
-- Windows acceptance for 0.5.1 CookieManager/Profile8/security-state paths.
-- Dedicated native site-data manager for cookies and permissions across all origins.
-- Certificate-detail surface when WebView2/DevTools can provide trustworthy chain metadata.
-- Recovery infobar with explicit Keep restored session / Start fresh actions.
-- Better profile creation with avatar/color preview and optional desktop shortcut.
-- Bookmark tree drag-to-folder targets and folder creation directly in the manager.
-- Keyboard/accessibility audit for site-info, internal pages, tab groups and popup menus.
-- Signed installer/updater architecture, release channels and code-signing preparation.
-- Repeat Chromium-vs-WebCom memory measurements with identical sites and tab states.
+## Next acceptance and product layer
+1. Run the full Windows/MSVC build and native UI harness with the new tab-strip accessibility provider linked through `oleacc` / `oleaut32`.
+2. Exercise Narrator and at least one UI Automation inspection tool against horizontal and vertical tabs, including selection, tab close/reorder, workspace switching, Incognito labels, sleeping tabs, and high-contrast mode.
+3. Run Stable/Beta signed package matrix tests on a clean VM, including beta-to-final and rejected Stable-prerelease cases.
+4. Exercise rollback from a deliberately failed health window and verify every `RecoveryReadiness` failure mode is fail-closed.
+5. Capture one-tab, five-tab, sleeping-tab, and two-profile memory runs with the 300 MiB one-tab private-commit target visible in QA artifacts; optimize only from measured regressions.
+6. Re-run 0.7.9 unpacked-extension source-health acceptance and only add deeper background/service-worker diagnostics where public WebView2 APIs expose reliable information without keeping extra web processes alive.
+7. After those Windows acceptance passes, produce the first signed 0.8.x beta candidate rather than treating this Linux source validation as release certification.

@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace webcom {
 
@@ -16,6 +17,21 @@ struct Appearance {
     // 0xRRGGBB, not Win32 COLORREF. Black is a valid explicit color.
     std::optional<std::uint32_t> accent_rgb;
     bool show_bookmarks = true;
+    bool reduce_motion = false;
+    bool high_contrast = false;
+    // Reader Mode defaults are profile-local and bounded by the native UI.
+    int reader_text_scale = 0;   // -2..4
+    int reader_width_mode = 1;   // 0 narrow, 1 comfortable, 2 wide
+    bool reader_serif = false;
+    // Optional user-facing label. The immutable WebView2 profile key remains
+    // the SavedProfile::name used for storage and browser data isolation.
+    std::string display_name;
+
+    Appearance() = default;
+    Appearance(BrowserTheme selected_theme, std::optional<std::uint32_t> selected_accent = {},
+               bool bookmarks = true, bool reduced_motion = false, std::string label = {}, bool contrast = false)
+        : theme(selected_theme), accent_rgb(selected_accent), show_bookmarks(bookmarks),
+          reduce_motion(reduced_motion), high_contrast(contrast), display_name(std::move(label)) {}
     bool operator==(const Appearance&) const = default;
 };
 

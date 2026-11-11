@@ -36,7 +36,8 @@ inline std::unique_ptr<Gdiplus::Bitmap> DecodeTabFavicon(IStream* stream) {
         bytes[12]!='I' || bytes[13]!='H' || bytes[14]!='D' || bytes[15]!='R')return {};
     const auto number=[&](std::size_t offset){return (static_cast<std::uint32_t>(bytes[offset])<<24)|
         (static_cast<std::uint32_t>(bytes[offset+1])<<16)|(static_cast<std::uint32_t>(bytes[offset+2])<<8)|bytes[offset+3];};
-    const auto width=number(16),height=number(20);
+    const auto width = number(16);
+    const auto height = number(20);
     if(!width || !height || width>512 || height>512)return {};
     Microsoft::WRL::ComPtr<IStream> memory;
     memory.Attach(SHCreateMemStream(bytes.data(),total));

@@ -1,6 +1,7 @@
 // Per-profile appearance belongs to the window, never to mutable global colors.
 void BrowserApp::Impl::ApplyAppearance() {
-    palette_=MakePalette(appearance_,profile_name_);
+    auto effective=appearance_;if(SystemHighContrastEnabled())effective.high_contrast=true;
+    palette_=MakePalette(effective,profile_name_);
     kCaption=NativeColor(palette_.caption);kFrame=NativeColor(palette_.frame);
     kSurface=NativeColor(palette_.surface);kHover=NativeColor(palette_.hover);
     kInk=NativeColor(palette_.ink);kMuted=NativeColor(palette_.muted);
@@ -8,6 +9,11 @@ void BrowserApp::Impl::ApplyAppearance() {
     const auto profile_rgb=ProfileColor(appearance_,profile_name_);
     profile_color_=NativeColor(profile_rgb);profile_ink_=NativeColor(ContrastInk(profile_rgb));
     show_bookmarks_=appearance_.show_bookmarks;
+    if(appearance_.reduce_motion){
+        tab_transition_until_=0;hover_animation_start_=0;hover_animation_from_=-1;hover_animation_to_=-1;
+        tab_reflow_start_=0;tab_reflow_from_.clear();omnibox_hover_start_=0;omnibox_hover_from_=-1;omnibox_hover_to_=-1;
+        if(window_)KillTimer(window_,kAnimationFrame);
+    }
     if(!window_ || closing_)return;
     const auto brush=[&](HBRUSH& current,COLORREF color){
         if(HBRUSH next=CreateSolidBrush(color)){if(current)DeleteObject(current);current=next;}
@@ -56,13 +62,15 @@ void BrowserApp::Impl::AppearanceOptions(UINT section) {
         items.push_back({ColorCustom,L"Custom color...",L"",L"\uE790"});
     } else {
         items={
-            {0,L"Appearance for "+Wide(profile_name_),L"",L"",false},
+            {0,L"Appearance for "+ProfileDisplayName(profile_name_,&appearance_),L"",L"",false},
             divider,
-            {ThemeMenu,L"Dark theme",Wide(ThemeName(appearance_.theme))+L"  \u203A",L"\uE771"},
-            {ProfileColorMenu,L"Profile color",L"\u203A",L"\uE790"},
-            {ToggleBookmarks,L"Show bookmarks bar",L"Ctrl+Shift+B",L"\uE734",true,show_bookmarks_},
+            {ThemeMenu,L"Dark theme",Wide(ThemeName(appearance_.theme))+L"  ›",L""},
+            {ProfileColorMenu,L"Profile color",L"›",L""},
+            {ToggleBookmarks,L"Show bookmarks bar",L"Ctrl+Shift+B",L"",true,show_bookmarks_},
+            {ToggleReducedMotion,L"Reduce WebCom motion",L"Disables browser chrome animations",L"",true,appearance_.reduce_motion},
+            {ToggleHighContrast,L"High contrast WebCom chrome",SystemHighContrastEnabled()?L"Windows High Contrast is currently active":L"Black/white/yellow browser chrome",L"",true,appearance_.high_contrast || SystemHighContrastEnabled()},
             divider,
-            {AppearanceReset,L"Reset appearance",L"",L"\uE777"}
+            {AppearanceReset,L"Reset appearance",L"",L""}
         };
         items[3].swatch_rgb=ProfileColor(appearance_,profile_name_);
     }

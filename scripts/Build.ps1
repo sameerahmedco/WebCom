@@ -5,6 +5,9 @@ param(
     [ValidateSet('x64', 'ARM64')]
     [string]$Architecture = 'x64',
     [string]$SdkDir,
+    [string]$StableManifestUrl = '',
+    [string]$BetaManifestUrl = '',
+    [string]$PublisherSha256 = '',
     [switch]$SkipTests,
     [switch]$SkipUiTests
 )
@@ -71,13 +74,30 @@ try {
     $resolvedSdk = [string]$resolvedSdk
     if (-not $resolvedSdk) { throw 'WebView2 SDK restore did not return a directory.' }
 
+    if (($StableManifestUrl -or $BetaManifestUrl) -and $PublisherSha256 -notmatch '^[0-9A-Fa-f]{64}$') {
+        throw 'A release manifest URL requires -PublisherSha256 with the 64-hex SHA-256 fingerprint of the Authenticode signer certificate.'
+    }
+    foreach ($endpoint in @($StableManifestUrl, $BetaManifestUrl)) {
+        if ($endpoint -and $endpoint -notmatch '^https://\S+$') { throw "Update manifest endpoints must be compact HTTPS URLs: $endpoint" }
+    }
     $buildDirectory = Join-Path $repositoryRoot "build\windows-$Architecture-$Configuration"
     Write-Host "Building WebCom $Architecture ($Configuration)..."
-    Invoke-Checked $cmakePath @(
+    $configureArgs = @(
         '-S', $repositoryRoot, '-B', $buildDirectory, '-G', 'Ninja',
         "-DCMAKE_MAKE_PROGRAM=$ninjaPath", "-DCMAKE_BUILD_TYPE=$Configuration",
-        "-DWEBVIEW2_SDK_DIR=$resolvedSdk", '-DWEBCOM_BUILD_APP=ON', '-DBUILD_TESTING=ON', "-DWEBCOM_BUILD_UI_TESTS=$(if ($SkipUiTests) { 'OFF' } else { 'ON' })"
+        "-DWEBVIEW2_SDK_DIR=$resolvedSdk", '-DWEBCOM_BUILD_APP=ON', '-DBUILD_TESTING=ON', "-DWEBCOM_BUILD_UI_TESTS=$(if ($SkipUiTests) { 'OFF' } else { 'ON' })",
+        "-DWEBCOM_STABLE_MANIFEST_URL=$StableManifestUrl", "-DWEBCOM_BETA_MANIFEST_URL=$BetaManifestUrl", "-DWEBCOM_PUBLISHER_SHA256=$PublisherSha256"
     )
+    Invoke-Checked $cmakePath $configureArgs
+
+    Write-Host 'Running MSVC source preflight before compiling the browser...'
+    Invoke-Checked $cmakePath @('--build', $buildDirectory, '--target', 'webcom_source_preflight', '--parallel')
+    $preflightExecutable = Join-Path $buildDirectory 'webcom_source_preflight.exe'
+    if (-not (Test-Path -LiteralPath $preflightExecutable -PathType Leaf)) {
+        throw "MSVC source preflight executable was not produced: $preflightExecutable"
+    }
+    Invoke-Checked $preflightExecutable @($repositoryRoot)
+
     Invoke-Checked $cmakePath @('--build', $buildDirectory, '--parallel')
 
     $crossCompiled = ($Architecture -eq 'ARM64' -and $originalHostArchitecture -notmatch '^ARM64$')
@@ -110,7 +130,7 @@ try {
         $assetPath = Join-Path $repositoryRoot "resources\$brandAsset"
         if (Test-Path -LiteralPath $assetPath) { Copy-Item -LiteralPath $assetPath -Destination $packageDirectory -Force }
     }
-    foreach ($documentName in @('README.md', 'BUILDING.md', 'START-HERE.txt', 'THIRD-PARTY-NOTICES.md', 'run.cmd', 'Test-UI.cmd')) {
+    foreach ($documentName in @('README.md', 'HOW_TO_BUILD.md', 'BUILDING.md', 'START-HERE.txt', 'THIRD-PARTY-NOTICES.md', 'run.cmd', 'Test-UI.cmd')) {
         $documentPath = Join-Path $repositoryRoot $documentName
         if (Test-Path -LiteralPath $documentPath) {
             Copy-Item -LiteralPath $documentPath -Destination $packageDirectory -Force

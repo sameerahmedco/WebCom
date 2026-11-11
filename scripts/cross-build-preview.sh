@@ -129,7 +129,7 @@ if [[ "$build_ui_tests" == true ]]; then
 fi
 cp -- "$project_root/scripts/Measure-WebComMemory.ps1" "$output_directory/Measure-WebComMemory.ps1"
 cp -- "$project_root/scripts/Open-RuntimeDownload.ps1" "$output_directory/Open-RuntimeDownload.ps1"
-for document_name in README.md BUILDING.md START-HERE.txt THIRD-PARTY-NOTICES.md; do
+for document_name in README.md HOW_TO_BUILD.md BUILDING.md START-HERE.txt THIRD-PARTY-NOTICES.md; do
     if [[ -f "$project_root/$document_name" ]]; then
         cp -- "$project_root/$document_name" "$output_directory/$document_name"
     fi

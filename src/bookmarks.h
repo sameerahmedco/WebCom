@@ -16,9 +16,28 @@ std::string NormalizeBookmarkFolderPath(std::string_view folder);
 std::string BookmarkFolderParent(std::string_view folder);
 std::vector<std::string> BookmarkFolderPaths(const std::vector<Bookmark>& bookmarks,
                                              bool include_ancestors = true);
+std::vector<std::string> BookmarkFolderPaths(const std::vector<Bookmark>& bookmarks,
+                                             const std::vector<std::string>& explicit_folders,
+                                             bool include_ancestors = true);
 bool RenameBookmarkFolder(std::vector<Bookmark>& bookmarks,
                           std::string_view old_path,
                           std::string_view new_path);
+
+// Explicit folder definitions let empty and nested folders exist before any
+// bookmark is moved into them. They are stored separately from bookmark rows
+// so the established bookmark file format remains backward compatible.
+std::vector<std::string> LoadBookmarkFolders(const std::filesystem::path& root,
+                                             std::string_view profile);
+bool SaveBookmarkFolders(const std::filesystem::path& root, std::string_view profile,
+                         const std::vector<std::string>& folders,
+                         std::string* error = nullptr);
+bool AddBookmarkFolder(std::vector<std::string>& folders, std::string path);
+bool RenameBookmarkFolderPath(std::vector<std::string>& folders,
+                              std::vector<Bookmark>& bookmarks,
+                              std::string_view old_path, std::string_view new_path);
+bool RemoveBookmarkFolder(std::vector<std::string>& folders,
+                          const std::vector<Bookmark>& bookmarks,
+                          std::string_view path);
 
 // Missing/corrupt files use Google, YouTube and GitHub defaults. A valid saved
 // empty list remains empty. Invalid profile names return an empty list.

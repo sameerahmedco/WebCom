@@ -1,0 +1,7 @@
+#pragma once
+
+namespace webcom::release_config {
+inline constexpr const char kStableManifestUrl[] = "@WEBCOM_STABLE_MANIFEST_URL@";
+inline constexpr const char kBetaManifestUrl[] = "@WEBCOM_BETA_MANIFEST_URL@";
+inline constexpr const char kPublisherSha256[] = "@WEBCOM_PUBLISHER_SHA256@";
+} // namespace webcom::release_config
