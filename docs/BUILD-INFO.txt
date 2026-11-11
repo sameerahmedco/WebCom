@@ -1,8 +1,9 @@
-WebCom for Windows v2 public-beta hardening
+WebCom v2 for Windows
 
-Source-only Windows C++ milestone.
-2.0.0 adds Stable/Beta prerelease policy enforcement, centralized rollback readiness, custom owner-drawn tab accessibility via MSAA, release ProductVersion/matrix verification, and repeatable memory regression budgets.
-It retains the 0.7.9 WebView2 unpacked-extension source-health workflow.
-Portable validation: 29/29 CTest targets passed with GCC and independently 29/29 with Clang; 943 behavioral checks plus 183 Windows/MSVC source-preflight checks = 1,126 explicit checks, all passing.
-A v2 Windows executable/MSAA/WebView2 runtime acceptance run was not built or executed in this Linux environment.
-See docs/VALIDATION-v2.md and docs/PUBLIC-BETA-CHECKLIST-v2.md.
+Native C++20 / Win32 browser shell using Microsoft Edge WebView2 for web rendering.
+Current machine/update version: 2.0.0.
+Portable validation: 29/29 CTest targets with GCC and 29/29 with Clang.
+Behavioral checks: 943 passing.
+Windows/MSVC source-preflight checks: 183 passing.
+A real Windows/MSVC/WebView2 runtime acceptance run remains required before public binary release sign-off.
+See docs/VALIDATION.md and docs/PUBLIC-BETA-CHECKLIST.md.

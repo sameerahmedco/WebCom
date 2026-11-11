@@ -169,15 +169,15 @@ void RunTests() {
     }
 
     // Version 3 had one app-wide password-save flag and no general-autofill field.
-    // Migration applies that legacy flag to each profile and keeps form autofill on.
-    const auto legacyV3 = root / "legacy-v3";
-    std::filesystem::create_directories(legacyV3);
-    Write(legacyV3 / "state.v1",
+    // Migration applies that compatibility flag to each profile and keeps form autofill on.
+    const auto olderV3 = root / "older-v3";
+    std::filesystem::create_directories(olderV3);
+    Write(olderV3 / "state.v1",
         "WEBCOM_STATE\t3\nsettings\tbalanced\t0\tDefault\n"
         "profile\tDefault\t0\n"
         "tab\t0\t0\twebcom%3Anewtab\tNew%20tab\t\n"
         "endprofile\nend\n");
-    const auto migratedV3 = LoadState(legacyV3);
+    const auto migratedV3 = LoadState(olderV3);
     Check(migratedV3.profiles.size() == 1 && !migratedV3.profiles[0].save_passwords &&
           migratedV3.profiles[0].general_autofill,
           "version 3 credential preferences migrate into the profile");
@@ -185,14 +185,14 @@ void RunTests() {
 
     // Version 4 had profile-local credential preferences but no workspace metadata.
     // Migration creates a Main workspace and keeps horizontal tabs.
-    const auto legacyV4 = root / "legacy-v4";
-    std::filesystem::create_directories(legacyV4);
-    Write(legacyV4 / "state.v1",
+    const auto olderV4 = root / "older-v4";
+    std::filesystem::create_directories(olderV4);
+    Write(olderV4 / "state.v1",
         "WEBCOM_STATE\t4\nsettings\tbalanced\t1\tDefault\n"
         "profile\tDefault\t0\t1\t1\n"
         "tab\t0\t0\twebcom%3Anewtab\tNew%20tab\t\n"
         "endprofile\nend\n");
-    const auto migratedV4 = LoadState(legacyV4);
+    const auto migratedV4 = LoadState(olderV4);
     Check(migratedV4.profiles.size() == 1 && migratedV4.profiles[0].workspaces.size() == 1 &&
           migratedV4.profiles[0].workspaces[0].name == "Main" && migratedV4.profiles[0].active_workspace == "Main" &&
           !migratedV4.profiles[0].vertical_tabs && migratedV4.profiles[0].tabs[0].workspace == "Main",
@@ -200,30 +200,30 @@ void RunTests() {
 
 
     // Version 5 had workspaces and vertical tabs but no persisted compact rail.
-    const auto legacyV5 = root / "legacy-v5";
-    std::filesystem::create_directories(legacyV5);
-    Write(legacyV5 / "state.v1",
+    const auto olderV5 = root / "older-v5";
+    std::filesystem::create_directories(olderV5);
+    Write(olderV5 / "state.v1",
         "WEBCOM_STATE\t5\nsettings\tbalanced\t1\tDefault\n"
         "profile\tDefault\t0\t1\t1\tMain\t1\n"
         "workspace\tMain\t0\n"
         "tab\t0\t0\twebcom%3Anewtab\tNew%20tab\t\tMain\n"
         "endprofile\nend\n");
-    const auto migratedV5 = LoadState(legacyV5);
+    const auto migratedV5 = LoadState(olderV5);
     Check(migratedV5.profiles.size()==1 && migratedV5.profiles[0].vertical_tabs &&
           !migratedV5.profiles[0].vertical_tabs_collapsed,
           "version 5 vertical tabs migrate with the rail expanded");
 
     // Version 6 had no startup preference. Migration keeps the established
     // continue-where-you-left-off behavior and no configured startup pages.
-    const auto legacyV6 = root / "legacy-v6";
-    std::filesystem::create_directories(legacyV6);
-    Write(legacyV6 / "state.v1",
+    const auto olderV6 = root / "older-v6";
+    std::filesystem::create_directories(olderV6);
+    Write(olderV6 / "state.v1",
         "WEBCOM_STATE\t6\nsettings\tbalanced\t1\tDefault\n"
         "profile\tDefault\t0\t1\t1\tMain\t1\t1\n"
         "workspace\tMain\t0\n"
         "tab\t0\t0\twebcom%3Anewtab\tNew%20tab\t\tMain\n"
         "endprofile\nend\n");
-    const auto migratedV6 = LoadState(legacyV6);
+    const auto migratedV6 = LoadState(olderV6);
     Check(migratedV6.profiles.size() == 1 &&
           migratedV6.profiles[0].startup_mode == StartupMode::Continue &&
           migratedV6.profiles[0].startup_pages.empty(),

@@ -13,7 +13,7 @@ int main(){
 
     std::string error;
     const std::vector<DiagnosticsBundleEntry> entries{
-        {"diagnostics.txt","WebCom support diagnostics\r\nVersion: 0.6.9\r\n"},
+        {"diagnostics.txt","WebCom support diagnostics\r\nVersion: 2.0.0\r\n"},
         {"privacy.txt","No browsing URLs, cookies or password values are included.\r\n"},
         {"updates.txt","Channel: stable\r\nAutomatic install: disabled\r\n"}
     };

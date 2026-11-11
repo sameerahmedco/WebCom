@@ -57,7 +57,7 @@ void BrowserApp::Session::ActivateProfile(std::string_view profile) {
         [&](const SavedProfile& saved) { return saved.name == profile; });
     if (found == state.profiles.end()) return;
     state.active_profile = found->name;
-    // Keep the legacy app-wide field synchronized for v1-v3 migration and
+    // Keep the compatibility app-wide field synchronized for v1-v3 migration and
     // sensible defaults when a brand-new profile is created. Version 4
     // persists the authoritative value on each SavedProfile.
     state.save_passwords = found->save_passwords;

@@ -1,0 +1,23 @@
+# WebCom v2 public-beta checklist
+
+- [ ] Fresh MSVC `build.cmd` succeeds after source preflight.
+- [ ] `WebCom.exe` and the native UI test harness link successfully.
+- [ ] Normal and private browsing work across common sites.
+- [ ] Multiple profiles remain isolated and can run simultaneously.
+- [ ] History, bookmarks, sessions, and crash recovery behave correctly.
+- [ ] Password/autofill prompts and saved credentials behave correctly.
+- [ ] Cookie and site-permission controls work per profile.
+- [ ] SSL/security UI reports expected connection state.
+- [ ] Downloads, local files, printing, find, and Developer Tools work.
+- [ ] Workspaces, vertical tabs, split view, Reader mode, and capture tools work.
+- [ ] Unpacked extension load/reload/remove and per-profile isolation work.
+- [ ] Narrator announces the custom tab strip and selected/focused states correctly.
+- [ ] Horizontal/vertical tab bounds and hit-testing are correct for accessibility clients.
+- [ ] Stable manifests reject prerelease versions.
+- [ ] Beta manifests accept correctly signed prerelease versions.
+- [ ] Installer ProductName/ProductVersion match the release manifest.
+- [ ] Rollback is offered only when centralized recovery readiness is `ready`.
+- [ ] Recovery packages are re-verified immediately before launch.
+- [ ] One-tab memory is measured after warmup and compared with the current release budget.
+- [ ] Multi-tab, sleeping-tab, split-view, and multi-profile memory results are recorded.
+- [ ] Update checks/downloads/installs/rollback remain explicit and user-controlled.

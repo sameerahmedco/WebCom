@@ -1,9 +1,9 @@
-# Running and building WebCom 2.0.0 for Windows
+# Running and building WebCom v2 for Windows
 
 > New to the project? Start with **[HOW_TO_BUILD.md](HOW_TO_BUILD.md)** for the step-by-step GitHub/contributor guide. This file keeps the lower-level release/build details.
 
 
-> **2.0.0:** adds Stable/Beta prerelease policy enforcement, centralized rollback readiness, a custom-tab MSAA accessibility bridge, stricter release-package verification, and memory regression budgets while retaining 0.7.9 extension source health.
+> **Current release:** Stable/Beta policy enforcement, centralized rollback readiness, a custom-tab MSAA accessibility bridge, stricter release-package verification, and memory regression budgets.
 > **MSVC follow-up:** v2 also normalizes screenshot-annotation `LONG`/`int` coordinates before `std::clamp`/GDI+ overload selection and qualifies `webcom::StartupMode` in the native Windows UI test harness. The source preflight guards these Windows-only regression classes.
 WebCom is a native C++20 / Win32 project using Microsoft Edge WebView2 for web rendering. The source package includes a build wrapper that restores the pinned WebView2 SDK and builds the browser with MSVC.
 
@@ -62,7 +62,7 @@ Keep `WebView2Loader.dll` beside `WebCom.exe`.
 
 Every build writes `build-last.log` beside `build.cmd`. If MSVC fails, send that file; it contains the exact compiler or linker error.
 
-For v2, Windows acceptance must additionally exercise the custom tab accessibility provider with Narrator/UI Automation inspection, Stable/Beta signed release policy, centralized rollback readiness, and multi-sample memory budgets. Re-run the complete 0.7.9 extension-source migration/change/reload/forget/per-profile matrix as a regression set. See `docs/VALIDATION.md` and `docs/PUBLIC-BETA-CHECKLIST-v2.md`.
+For v2, Windows acceptance must additionally exercise the custom tab accessibility provider with Narrator/UI Automation inspection, Stable/Beta signed release policy, centralized rollback readiness, and multi-sample memory budgets. Re-run the complete unpacked-extension migration, change-detection, reload, forget, and per-profile isolation matrix as a regression set. See `docs/VALIDATION.md` and `docs/PUBLIC-BETA-CHECKLIST.md`.
 
 
 ## Signed installer packaging (Windows only)

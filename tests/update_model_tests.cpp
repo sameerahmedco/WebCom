@@ -10,32 +10,32 @@ int main(){
     Check(ParseReleaseChannel("stable") == ReleaseChannel::Stable,"stable channel parses");
     Check(ParseReleaseChannel("BETA") == ReleaseChannel::Beta,"beta channel is case insensitive");
     Check(!ParseReleaseChannel("nightly"),"unknown channel rejected");
-    Check(IsValidReleaseVersion("0.6.9"),"stable semantic version accepted");
-    Check(IsValidReleaseVersion("0.7.0-beta.1"),"prerelease semantic version accepted");
-    Check(IsPrereleaseReleaseVersion("0.7.0-beta.1"),"prerelease version classified");
-    Check(!IsPrereleaseReleaseVersion("0.7.0"),"stable version is not prerelease");
-    Check(IsReleaseVersionAllowedOnChannel("0.7.0",ReleaseChannel::Stable),"stable version allowed on stable channel");
-    Check(!IsReleaseVersionAllowedOnChannel("0.7.0-beta.1",ReleaseChannel::Stable),"prerelease blocked on stable channel");
-    Check(IsReleaseVersionAllowedOnChannel("0.7.0-beta.1",ReleaseChannel::Beta),"prerelease allowed on beta channel");
-    Check(IsReleaseVersionAllowedOnChannel("0.7.0",ReleaseChannel::Beta),"final release allowed on beta channel");
-    Check(!IsValidReleaseVersion("0.6"),"short version rejected");
-    Check(IsNewerReleaseVersion("0.6.8","0.6.9"),"new patch is newer");
-    Check(IsNewerReleaseVersion("0.7.0-beta.1","0.7.0"),"stable beats same prerelease");
-    Check(!IsNewerReleaseVersion("0.6.9","0.6.8"),"older release not newer");
+    Check(IsValidReleaseVersion("2.0.0"),"stable semantic version accepted");
+    Check(IsValidReleaseVersion("2.1.0-beta.1"),"prerelease semantic version accepted");
+    Check(IsPrereleaseReleaseVersion("2.1.0-beta.1"),"prerelease version classified");
+    Check(!IsPrereleaseReleaseVersion("2.1.0"),"stable version is not prerelease");
+    Check(IsReleaseVersionAllowedOnChannel("2.1.0",ReleaseChannel::Stable),"stable version allowed on stable channel");
+    Check(!IsReleaseVersionAllowedOnChannel("2.1.0-beta.1",ReleaseChannel::Stable),"prerelease blocked on stable channel");
+    Check(IsReleaseVersionAllowedOnChannel("2.1.0-beta.1",ReleaseChannel::Beta),"prerelease allowed on beta channel");
+    Check(IsReleaseVersionAllowedOnChannel("2.1.0",ReleaseChannel::Beta),"final release allowed on beta channel");
+    Check(!IsValidReleaseVersion("2.0"),"short version rejected");
+    Check(IsNewerReleaseVersion("1.9.9","2.0.0"),"new patch is newer");
+    Check(IsNewerReleaseVersion("2.1.0-beta.1","2.1.0"),"stable beats same prerelease");
+    Check(!IsNewerReleaseVersion("2.0.0","1.9.9"),"older release not newer");
 
-    const std::string legacy =
-        "WEBCOM_RELEASE\t1\nversion\t0.6.9\nchannel\tstable\n"
-        "url\thttps://downloads.example.test/WebCom-0.6.9.zip\n"
+    const std::string schema1_manifest =
+        "WEBCOM_RELEASE\t1\nversion\t2.0.0\nchannel\tstable\n"
+        "url\thttps://downloads.example.test/WebCom-2.0.0.zip\n"
         "sha256\t0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n"
         "published\t2026-11-10T22:00:00Z\n";
     std::string error;
-    const auto parsed_legacy=ParseUpdateManifest(legacy,&error);
-    Check(parsed_legacy && parsed_legacy->schema_version==1,"legacy v1 manifest still parses");
-    Check(parsed_legacy && !IsInstallEligibleUpdateManifest(*parsed_legacy),"legacy manifest is never install eligible");
+    const auto parsed_schema1=ParseUpdateManifest(schema1_manifest,&error);
+    Check(parsed_schema1 && parsed_schema1->schema_version==1,"schema v1 manifest still parses");
+    Check(parsed_schema1 && !IsInstallEligibleUpdateManifest(*parsed_schema1),"schema v1 manifest is never install eligible");
 
     const std::string signed_manifest =
-        "WEBCOM_RELEASE\t2\nversion\t0.6.9\nchannel\tstable\n"
-        "url\thttps://downloads.example.test/WebCom-0.6.9-installer.exe\n"
+        "WEBCOM_RELEASE\t2\nversion\t2.0.0\nchannel\tstable\n"
+        "url\thttps://downloads.example.test/WebCom-2.0.0-installer.exe\n"
         "sha256\t0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n"
         "size\t12345678\n"
         "signature\tauthenticode\n"
@@ -47,8 +47,8 @@ int main(){
     Check(parsed && IsInstallEligibleUpdateManifest(*parsed),"complete v2 manifest is install eligible after binary verification");
 
     const std::string bad_stable_prerelease =
-        "WEBCOM_RELEASE\t2\nversion\t0.7.0-beta.2\nchannel\tstable\n"
-        "url\thttps://downloads.example.test/WebCom-0.7.0-beta.2-installer.exe\n"
+        "WEBCOM_RELEASE\t2\nversion\t2.1.0-beta.2\nchannel\tstable\n"
+        "url\thttps://downloads.example.test/WebCom-2.1.0-beta.2-installer.exe\n"
         "sha256\t0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n"
         "size\t12345678\n"
         "signature\tauthenticode\n"
@@ -74,20 +74,20 @@ int main(){
     const auto settings=LoadUpdateSettings(root);
     Check(settings.channel==ReleaseChannel::Beta && settings.checks_enabled,"beta channel and update-check consent round trip");
     {
-        std::ofstream legacy_settings(root / "updates.v1", std::ios::binary | std::ios::trunc);
-        legacy_settings << "WEBCOM_UPDATES\t1\nchannel\tstable\n";
+        std::ofstream older_settings(root / "updates.v1", std::ios::binary | std::ios::trunc);
+        older_settings << "WEBCOM_UPDATES\t1\nchannel\tstable\n";
     }
     const auto migrated=LoadUpdateSettings(root);
     Check(migrated.channel==ReleaseChannel::Stable && !migrated.checks_enabled,"v1 settings migrate with checks disabled");
 
     UpdateTransaction transaction;
-    Check(parsed && StageVerifiedUpdate(transaction,*parsed,"0.6.8",&error),"verified signed update can be staged");
-    Check(transaction.phase==UpdateTransactionPhase::VerifiedPackage && transaction.target_version=="0.6.9" && transaction.previous_version=="0.6.8",
+    Check(parsed && StageVerifiedUpdate(transaction,*parsed,"1.9.9",&error),"verified signed update can be staged");
+    Check(transaction.phase==UpdateTransactionPhase::VerifiedPackage && transaction.target_version=="2.0.0" && transaction.previous_version=="1.9.9",
           "staged transaction records target and previous versions");
-    UpdateTransaction legacy_transaction;
-    Check(parsed_legacy && !StageVerifiedUpdate(legacy_transaction,*parsed_legacy,"0.6.8",&error),"legacy unsigned manifest cannot be staged");
+    UpdateTransaction schema1_transaction;
+    Check(parsed_schema1 && !StageVerifiedUpdate(schema1_transaction,*parsed_schema1,"1.9.9",&error),"schema v1 unsigned manifest cannot be staged");
     UpdateTransaction stable_prerelease_transaction;
-    Check(parsed_bad_stable_prerelease && !StageVerifiedUpdate(stable_prerelease_transaction,*parsed_bad_stable_prerelease,"0.6.8",&error),"stable prerelease manifest cannot be staged");
+    Check(parsed_bad_stable_prerelease && !StageVerifiedUpdate(stable_prerelease_transaction,*parsed_bad_stable_prerelease,"1.9.9",&error),"stable prerelease manifest cannot be staged");
     Check(MarkUpdateInstallScheduled(transaction,&error) && transaction.phase==UpdateTransactionPhase::InstallScheduled,"verified package can be scheduled");
     Check(MarkUpdateAwaitingHealthCheck(transaction,&error) && transaction.phase==UpdateTransactionPhase::AwaitingHealthCheck,"scheduled install enters health-check state");
     Check(!UpdateRollbackRecommended(transaction),"rollback is not recommended before repeated health failures");
@@ -96,15 +96,15 @@ int main(){
     Check(RecordUpdateHealthFailure(transaction,&error) && UpdateRollbackRecommended(transaction),"two failed health starts recommend rollback");
     Check(SaveUpdateTransaction(root,transaction,&error),"update transaction saves atomically");
     Check(LoadUpdateTransaction(root)==transaction,"update transaction round trips");
-    Check(!MarkUpdateHealthy(transaction,"0.6.8",&error),"wrong running version cannot mark update healthy");
-    Check(MarkUpdateHealthy(transaction,"0.6.9",&error) && transaction.phase==UpdateTransactionPhase::None,"matching target clears successful update transaction");
+    Check(!MarkUpdateHealthy(transaction,"1.9.9",&error),"wrong running version cannot mark update healthy");
+    Check(MarkUpdateHealthy(transaction,"2.0.0",&error) && transaction.phase==UpdateTransactionPhase::None,"matching target clears successful update transaction");
     Check(SaveUpdateTransaction(root,transaction,&error),"idle update transaction saves");
     Check(LoadUpdateTransaction(root).phase==UpdateTransactionPhase::None,"idle update transaction loads");
 
     UpdateTransaction invalid_transaction;
     invalid_transaction.phase=UpdateTransactionPhase::VerifiedPackage;
-    invalid_transaction.target_version="0.6.9";
-    invalid_transaction.previous_version="0.6.8";
+    invalid_transaction.target_version="2.0.0";
+    invalid_transaction.previous_version="1.9.9";
     invalid_transaction.package_sha256=std::string(64,'a');
     invalid_transaction.package_size=100;
     invalid_transaction.failed_health_starts=1;

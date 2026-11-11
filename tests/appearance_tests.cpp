@@ -136,25 +136,25 @@ int main() {
     Check(!SaveAppearance(root,"Default",labeled,&error) && Bytes(path)==labeled_bytes,
           "invalid UTF-8 in profile display label is rejected");
     Check(SaveAppearance(root,"Default",saved,&error),"restore normal appearance after display-label validation tests");
-    const auto legacy_path = root / "Appearance" / "legacy.v1";
-    Write(legacy_path, "WEBCOM_APPEARANCE\t1\ntheme\tcharcoal\naccent\tauto\nbookmarks\t1\nend\n");
-    const auto legacy = LoadAppearance(root, "Legacy");
-    Check(legacy.theme == BrowserTheme::Charcoal && legacy.show_bookmarks && !legacy.reduce_motion,
+    const auto older_path = root / "Appearance" / "older.v1";
+    Write(older_path, "WEBCOM_APPEARANCE\t1\ntheme\tcharcoal\naccent\tauto\nbookmarks\t1\nend\n");
+    const auto older = LoadAppearance(root, "Older");
+    Check(older.theme == BrowserTheme::Charcoal && older.show_bookmarks && !older.reduce_motion,
           "version 1 appearance migrates with full motion by default");
-    const auto legacy_v2_path=root/"Appearance"/"legacy2.v1";
-    Write(legacy_v2_path,"WEBCOM_APPEARANCE\t2\ntheme\tforest\naccent\tauto\nbookmarks\t1\nmotion\treduced\nend\n");
-    const auto legacy_v2=LoadAppearance(root,"Legacy2");
-    Check(legacy_v2.theme==BrowserTheme::Forest && legacy_v2.reduce_motion && legacy_v2.display_name.empty(),
+    const auto older_v2_path=root/"Appearance"/"older2.v1";
+    Write(older_v2_path,"WEBCOM_APPEARANCE\t2\ntheme\tforest\naccent\tauto\nbookmarks\t1\nmotion\treduced\nend\n");
+    const auto older_v2=LoadAppearance(root,"Older2");
+    Check(older_v2.theme==BrowserTheme::Forest && older_v2.reduce_motion && older_v2.display_name.empty(),
           "version 2 appearance migrates with the immutable profile key as its display label");
-    const auto legacy_v3_path=root/"Appearance"/"legacy3.v1";
-    Write(legacy_v3_path,"WEBCOM_APPEARANCE\t3\ntheme\tforest\naccent\tauto\nbookmarks\t1\nmotion\tfull\ndisplay\tResearch%20Profile\nend\n");
-    const auto legacy_v3=LoadAppearance(root,"Legacy3");
-    Check(legacy_v3.display_name=="Research Profile" && !legacy_v3.high_contrast,
+    const auto older_v3_path=root/"Appearance"/"older3.v1";
+    Write(older_v3_path,"WEBCOM_APPEARANCE\t3\ntheme\tforest\naccent\tauto\nbookmarks\t1\nmotion\tfull\ndisplay\tResearch%20Profile\nend\n");
+    const auto older_v3=LoadAppearance(root,"Older3");
+    Check(older_v3.display_name=="Research Profile" && !older_v3.high_contrast,
           "version 3 appearance migrates with normal contrast by default");
-    const auto legacy_v4_path=root/"Appearance"/"legacy4.v1";
-    Write(legacy_v4_path,"WEBCOM_APPEARANCE\t4\ntheme\tgraphite\naccent\tauto\nbookmarks\t1\nmotion\tfull\ndisplay\t\ncontrast\tnormal\nend\n");
-    const auto legacy_v4=LoadAppearance(root,"Legacy4");
-    Check(legacy_v4.reader_text_scale==0 && legacy_v4.reader_width_mode==1 && !legacy_v4.reader_serif,
+    const auto older_v4_path=root/"Appearance"/"older4.v1";
+    Write(older_v4_path,"WEBCOM_APPEARANCE\t4\ntheme\tgraphite\naccent\tauto\nbookmarks\t1\nmotion\tfull\ndisplay\t\ncontrast\tnormal\nend\n");
+    const auto older_v4=LoadAppearance(root,"Older4");
+    Check(older_v4.reader_text_scale==0 && older_v4.reader_width_mode==1 && !older_v4.reader_serif,
           "version 4 appearance migrates with comfortable sans Reader defaults");
     Check(LoadAppearance(root, "Work") == defaults, "another profile keeps its own preferences");
     const auto previous = Bytes(path);

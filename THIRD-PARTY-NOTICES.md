@@ -2,7 +2,7 @@
 
 The WebCom source uses the Windows platform and Microsoft Edge WebView2 APIs.
 The Windows portable folder must retain the notices supplied with components
-distributed in that folder. This file accompanies the 0.4.0 preview.
+distributed in that folder. This file accompanies the WebCom source and packaged Windows builds.
 
 ## Microsoft WebView2
 
@@ -16,9 +16,9 @@ distributed in that folder. This file accompanies the 0.4.0 preview.
 
 ## Optional cross-built preview
 
-The provided x64 preview is compiled with Zig 0.13.0's Clang/MinGW target and
+The optional cross-build path uses Zig 0.13.0's Clang/MinGW target and
 its C/C++ support libraries. Corresponding bundled toolchain notices are in
-`licenses/`: Zig, MinGW, libc++, libc++abi and libunwind. These copies accompany
+`licenses/`: Zig, MinGW, libc++, libc++abi and libunwind. Corresponding notices cover
 the preview; the compiler itself is not redistributed.
 
 The primary Windows source build uses the installed Microsoft or compatible

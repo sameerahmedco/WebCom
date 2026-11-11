@@ -203,7 +203,7 @@ Do not treat a successful compile as the only release check. At minimum, test:
 - update/rollback verification for signed release builds;
 - memory usage with the included measurement script.
 
-See `docs/PUBLIC-BETA-CHECKLIST-v2.md` and `docs/VALIDATION.md` for the current release boundary.
+See `docs/PUBLIC-BETA-CHECKLIST.md` and `docs/VALIDATION.md` for the current release boundary.
 
 ## 11. Release and installer tooling
 

@@ -47,11 +47,11 @@ int main(){
 
     {
         std::filesystem::create_directories(ExtensionSourcesPath(root,"Legacy").parent_path(),ec);
-        std::ofstream legacy(ExtensionSourcesPath(root,"Legacy"),std::ios::binary|std::ios::trunc);
-        legacy<<"WEBCOM_EXTENSION_SOURCES\t1\nsource\tlegacy123\tC%3A%2FExt\n";
+        std::ofstream schema1(ExtensionSourcesPath(root,"Legacy"),std::ios::binary|std::ios::trunc);
+        schema1<<"WEBCOM_EXTENSION_SOURCES\t1\nsource\tsourcev1\tC%3A%2FExt\n";
     }
-    const auto legacy=LoadExtensionSources(root,"Legacy");
-    Check(legacy.size()==1 && legacy[0].extension_id=="legacy123" && legacy[0].source_stamp.empty(),"v1 source metadata migrates with an unknown baseline");
+    const auto migrated=LoadExtensionSources(root,"Legacy");
+    Check(migrated.size()==1 && migrated[0].extension_id=="sourcev1" && migrated[0].source_stamp.empty(),"v1 source metadata migrates with an unknown baseline");
 
     Check(ForgetExtensionSource(records,"new789"),"explicit source removal succeeds");
     Check(!FindExtensionSource(records,"new789") && records.size()==1,"removed mapping disappears");

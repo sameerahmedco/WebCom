@@ -4524,7 +4524,7 @@ void BrowserApp::Impl::ShowExtensionDetails(std::size_t index) {
     for (std::size_t i = 0; i < extension_sources_.size(); ++i)
         if (extension_sources_[i].extension_id == id) { source_index = i; break; }
     if (source_index >= extension_sources_.size()) {
-        body += L"\n\nUnpacked source: not recorded by WebCom. This can happen for extensions installed before v0.7.8 or by the underlying profile outside WebCom.";
+        body += L"\n\nUnpacked source: not recorded by WebCom. This can happen for extensions installed outside WebCom source tracking or by the underlying profile directly.";
     } else {
         const auto& source = extension_sources_[source_index];
         const auto& health = extension_source_health_[source_index];

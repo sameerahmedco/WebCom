@@ -214,7 +214,7 @@ bool ParseIPv4(std::string_view host, std::array<unsigned, 4>* parts = nullptr) 
         const auto dot = host.find('.');
         const auto part = host.substr(0, dot);
         if (part.empty() || part.size() > 3) return false;
-        // Avoid Chromium's legacy octal interpretation of zero-prefixed IPv4.
+        // Avoid Chromium's historical octal interpretation of zero-prefixed IPv4.
         if (part.size() > 1 && part.front() == '0') return false;
         for (char c : part) {
             if (!IsAsciiDigit(c)) return false;
@@ -351,7 +351,7 @@ Authority ParseAuthority(std::string_view authority, bool allow_user_info) {
     }
     if (only_digits_and_dots) {
         std::array<unsigned, 4> ipv4{};
-        // Avoid ambiguous legacy single-number and short-form IPv4 addresses.
+        // Avoid ambiguous historical single-number and short-form IPv4 addresses.
         if (!ParseIPv4(host, &ipv4)) return result;
         result.loopback = ipv4[0] == 127;
     } else {

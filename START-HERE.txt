@@ -1,10 +1,11 @@
 WebCom v2 for Windows
 
 NEW CONTRIBUTORS / GITHUB USERS
-1. Read HOW_TO_BUILD.md
-2. Install Visual Studio 2022 C++ Build Tools + Windows SDK + CMake/Ninja
-3. Run build.cmd
-4. Run run.cmd after the build succeeds
+1. Read README.md
+2. Read HOW_TO_BUILD.md
+3. Install Visual Studio 2022 C++ Build Tools + Windows SDK + CMake/Ninja
+4. Run build.cmd
+5. Run run.cmd after the build succeeds
 
 QUICK OUTPUT
 dist\WebCom\WebCom.exe
@@ -13,4 +14,5 @@ BUILD HELP
 Every build writes build-last.log. If compilation fails, report the first compiler/linker error block from that file.
 
 PROJECT STATUS
-WebCom v2 is a public-beta native C++20/Win32 browser using Microsoft Edge WebView2 for web rendering. See README.md for the project goal and feature overview, and docs/PUBLIC-BETA-CHECKLIST-v2.md for release acceptance.
+WebCom v2 is a public-beta native C++20/Win32 browser using Microsoft Edge WebView2 for web rendering.
+See docs/PUBLIC-BETA-CHECKLIST.md for release acceptance.
