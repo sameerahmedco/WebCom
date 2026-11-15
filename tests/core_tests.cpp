@@ -48,6 +48,8 @@ int main() {
     Address("webcom:extensions", "webcom:extensions");
     Address("webcom:recovery", "webcom:recovery");
     Address("webcom:privacy", "webcom:privacy");
+    Address("webcom:about", "webcom:about");
+    Address("webcom:passwords", "webcom:passwords");
     Address("WEBCOM:DOWNLOADS", "webcom:downloads");
     Address(" webcom:settings ", "webcom:settings");
     Address("webcom:bookmarks", "webcom:bookmarks");
@@ -180,6 +182,16 @@ int main() {
 
     Check(SuspendDelayMs(MemoryMode::Balanced) == 300'000, "balanced sleep delay");
     Check(SuspendDelayMs(MemoryMode::Saver) == 60'000, "saver sleep delay");
+    Check(SuspendDelayMs(SleepTimeout::OneMinute) == 60'000, "one-minute sleep preference");
+    Check(SuspendDelayMs(SleepTimeout::FiveMinutes) == 300'000, "five-minute sleep preference");
+    Check(SuspendDelayMs(SleepTimeout::FifteenMinutes) == 900'000, "fifteen-minute sleep preference");
+    Check(SuspendDelayMs(SleepTimeout::ThirtyMinutes) == 1'800'000, "thirty-minute sleep preference");
+    Check(SuspendDelayMs(SleepTimeout::Never) == std::numeric_limits<std::uint64_t>::max(), "never sleep preference has unbounded delay");
+    Check(PerformanceTickIntervalMs(SleepTimeout::OneMinute) == 10'000, "one-minute policy keeps responsive performance polling");
+    Check(PerformanceTickIntervalMs(SleepTimeout::FiveMinutes) == 30'000, "five-minute policy reduces idle wakeups");
+    Check(PerformanceTickIntervalMs(SleepTimeout::FifteenMinutes) == 60'000, "fifteen-minute policy uses one-minute polling");
+    Check(PerformanceTickIntervalMs(SleepTimeout::ThirtyMinutes) == 60'000, "thirty-minute policy uses one-minute polling");
+    Check(PerformanceTickIntervalMs(SleepTimeout::Never) == 0, "never-sleep policy disables the automatic performance timer");
     TabActivity activity;
     activity.last_active_ms = 100;
     Check(!ShouldSuspend(activity, 60'099, MemoryMode::Saver), "not before saver threshold");
@@ -188,6 +200,7 @@ int main() {
     Check(ShouldSuspend(activity, 300'100, MemoryMode::Balanced), "at balanced threshold");
     Check(!ShouldSuspend(activity, 99, MemoryMode::Saver), "clock reversal does not underflow");
     Check(!ShouldSuspend(activity, 100, MemoryMode::Saver), "just activated tab stays awake");
+    Check(!ShouldSuspend(activity, std::numeric_limits<std::uint64_t>::max(), SleepTimeout::Never), "never preference disables automatic sleep");
 
     bool TabActivity::* const guards[]{
         &TabActivity::active, &TabActivity::loading, &TabActivity::audible,

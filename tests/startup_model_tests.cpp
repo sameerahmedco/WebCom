@@ -1,5 +1,6 @@
 #include "startup_model.h"
 
+#include <filesystem>
 #include <iostream>
 #include <string_view>
 
@@ -31,6 +32,15 @@ int main(){
     profile.startup_pages={"https://example.com/"};
     plan=BuildStartupPlan(profile,true);
     Check(plan.restore_saved_session && plan.urls.empty(),"recovery override restores recovered tabs regardless of startup preference");
+
+    const auto temp=std::filesystem::absolute(std::filesystem::path("qa-temp")).lexically_normal();
+    Check(IsAcceptanceDataRootAllowed(temp / "WebCom-Acceptance-1234",temp),"acceptance root allows reserved direct child");
+    Check(IsAcceptanceDataRootAllowed(temp / "WebCom-Acceptance-run_01",temp),"acceptance root allows bounded QA suffix characters");
+    Check(!IsAcceptanceDataRootAllowed(temp / "WebCom",temp),"acceptance root rejects ordinary product folder");
+    Check(!IsAcceptanceDataRootAllowed(temp / "WebCom-Acceptance-",temp),"acceptance root requires a nonempty suffix");
+    Check(!IsAcceptanceDataRootAllowed(temp / "nested" / "WebCom-Acceptance-1",temp),"acceptance root rejects nested paths");
+    Check(!IsAcceptanceDataRootAllowed(temp.parent_path() / "WebCom-Acceptance-1",temp),"acceptance root rejects sibling paths");
+    Check(!IsAcceptanceDataRootAllowed(std::filesystem::path("WebCom-Acceptance-1"),temp),"acceptance root rejects relative paths");
 
     std::cout<<checks<<" checks, "<<failures<<" failures\n";
     return failures?1:0;

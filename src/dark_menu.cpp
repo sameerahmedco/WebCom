@@ -571,7 +571,7 @@ LRESULT CALLBACK MenuWindowProc(HWND window, UINT message, WPARAM wparam, LPARAM
         if (!state->done && reinterpret_cast<HWND>(lparam) != window &&
             (!lparam || !IsChild(window, reinterpret_cast<HWND>(lparam)))) state->End();
         return 0;
-    case WM_CANCELMODE: case WM_CLOSE: case WM_DISPLAYCHANGE: case WM_DPICHANGED:
+    case WM_CANCELMODE: case WM_CLOSE: case WM_DISPLAYCHANGE: case WM_DPICHANGED: case WM_SETTINGCHANGE: case WM_THEMECHANGED: case WM_SYSCOLORCHANGE:
         state->End(); return 0;
     case WM_DESTROY: state->done = true; return 0;
     case WM_NCDESTROY:
@@ -602,7 +602,7 @@ struct ResourceCleanup {
 } // namespace
 
 UINT ShowDarkMenu(HWND owner, POINT anchor_screen, const std::vector<MenuItem>& items,
-                  UINT dpi, int width_dip, bool align_right, const Palette* palette) {
+                  UINT dpi, int width_dip, bool align_right, const Palette* palette, bool reduce_motion) {
     if (!owner || !IsWindow(owner) || items.empty() || items.size() > 512) return 0;
     const HWND existing = static_cast<HWND>(GetPropW(owner, kActiveMenuProperty));
     if (existing && IsWindow(existing)) SendMessageW(existing, WM_CANCELMODE, 0, 0);
@@ -718,9 +718,10 @@ UINT ShowDarkMenu(HWND owner, POINT anchor_screen, const std::vector<MenuItem>& 
     }
     SetPropW(owner, kActiveMenuProperty, popup);
     state.LayoutButtons();
-    BOOL animate = TRUE;
-    SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &animate, 0);
-    if (!animate || GetSystemMetrics(SM_REMOTESESSION) || !AnimateWindow(popup, 85, AW_BLEND | AW_ACTIVATE))
+    BOOL system_animate = TRUE;
+    SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &system_animate, 0);
+    const bool allow_animation = !reduce_motion && system_animate && !GetSystemMetrics(SM_REMOTESESSION);
+    if (!allow_animation || !AnimateWindow(popup, 85, AW_BLEND | AW_ACTIVATE))
         ShowWindow(popup, SW_SHOW);
     UpdateWindow(popup);
     SetForegroundWindow(popup);

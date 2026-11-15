@@ -75,6 +75,14 @@ inline unsigned ChromeHoverAmount(int index, int from, int to,
     return 0u;
 }
 
+inline unsigned ChromeTabSelectionDuration(bool selection_changed, bool reduce_motion) {
+    return selection_changed && !reduce_motion ? 140u : 0u;
+}
+
+inline bool ChromeShouldAnimateReflow(bool has_origins, bool reduce_motion) {
+    return has_origins && !reduce_motion;
+}
+
 inline unsigned ChromeReflowAmount(unsigned long long elapsed_ms, unsigned duration_ms = 160) {
     if (duration_ms == 0 || elapsed_ms >= duration_ms) return 100u;
     const double t = static_cast<double>(elapsed_ms) / static_cast<double>(duration_ms);

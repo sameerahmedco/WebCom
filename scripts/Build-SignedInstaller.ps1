@@ -43,6 +43,10 @@ if (-not $SignTool) {
 }
 $out = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $OutputDir))
 New-Item -ItemType Directory -Force -Path $out | Out-Null
+$verifyPackage = Join-Path $PSScriptRoot 'Verify-BuildPackage.ps1'
+& $verifyPackage -DistDir $dist -RepositoryRoot (Split-Path -Parent $PSScriptRoot) -ExpectedVersion $Version `
+    -ExpectedArchitecture x64 -ExpectedConfiguration Release -ExpectedPublisherSha256 $ExpectedPublisherSha256 -RequireUiTests -RequireTestsPassed -RequireReleaseReady
+if ($LASTEXITCODE -ne 0) { Fail "pre-sign package integrity verification exited with $LASTEXITCODE" }
 $webcomExe = Join-Path $dist 'WebCom.exe'
 & $SignTool sign /fd SHA256 /sha1 $SigningCertificateSha1 /tr $TimestampUrl /td SHA256 $webcomExe
 if ($LASTEXITCODE -ne 0) { Fail "signtool could not sign WebCom.exe (exit $LASTEXITCODE)" }
@@ -52,6 +56,10 @@ $exeSig = Get-AuthenticodeSignature -LiteralPath $webcomExe
 if ($exeSig.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or -not $exeSig.SignerCertificate) { Fail "WebCom.exe Authenticode status is $($exeSig.Status)" }
 $exePublisher = CertSha256 $exeSig.SignerCertificate
 if ($exePublisher -ne $ExpectedPublisherSha256.ToLowerInvariant()) { Fail "WebCom.exe publisher SHA-256 mismatch: $exePublisher" }
+$signedDistReport = Join-Path $out 'signed-dist-verification.json'
+& $verifyPackage -DistDir $dist -RepositoryRoot (Split-Path -Parent $PSScriptRoot) -ExpectedVersion $Version `
+    -ExpectedArchitecture x64 -ExpectedConfiguration Release -ExpectedPublisherSha256 $ExpectedPublisherSha256 -RequireUiTests -RequireTestsPassed -RequireReleaseReady -RequireSignedExecutable -OutputJson $signedDistReport
+if ($LASTEXITCODE -ne 0) { Fail "post-sign package integrity verification exited with $LASTEXITCODE" }
 $iss = Join-Path $PSScriptRoot '..\installer\WebCom.iss'
 & $InnoCompiler "/DAppVersion=$Version" "/DVersionNumeric=$VersionNumeric" "/DSourceDir=$dist" "/DOutputDir=$out" $iss
 if ($LASTEXITCODE -ne 0) { Fail "Inno Setup exited with code $LASTEXITCODE" }

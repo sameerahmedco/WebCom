@@ -1,6 +1,7 @@
 #include "core.h"
 
 #include <array>
+#include <limits>
 #include <cstddef>
 #include <utility>
 
@@ -380,10 +381,10 @@ AddressResult ResolveAddress(std::string_view input) {
         EqualsIgnoreCase(input, "webcom:newtab")) {
         return Accept("webcom:newtab");
     }
-    for (const char* page : {"webcom:welcome", "webcom:history", "webcom:downloads", "webcom:settings",
+    for (const char* page : {"webcom:welcome", "webcom:history", "webcom:downloads", "webcom:settings", "webcom:passwords",
                              "webcom:bookmarks", "webcom:profiles", "webcom:shortcuts",
-                             "webcom:diagnostics", "webcom:recovery", "webcom:updates", "webcom:extensions", "webcom:sessions",
-                             "webcom:privacy", "webcom:reader"}) {
+                             "webcom:diagnostics", "webcom:feedback", "webcom:recovery", "webcom:updates", "webcom:extensions", "webcom:sessions",
+                             "webcom:privacy", "webcom:about", "webcom:reader"}) {
         if (EqualsIgnoreCase(input, page)) return Accept(page);
     }
     for (unsigned char c : input) {
@@ -499,17 +500,39 @@ bool IsValidProfileName(std::string_view name) {
     return true;
 }
 
-std::uint64_t SuspendDelayMs(MemoryMode mode) {
-    return mode == MemoryMode::Saver ? 60'000 : 300'000;
+std::uint64_t SuspendDelayMs(MemoryMode mode) { return mode == MemoryMode::Saver ? 60'000 : 300'000; }
+
+std::uint64_t SuspendDelayMs(SleepTimeout timeout) {
+    switch(timeout){
+    case SleepTimeout::OneMinute:return 60'000;
+    case SleepTimeout::FiveMinutes:return 300'000;
+    case SleepTimeout::FifteenMinutes:return 900'000;
+    case SleepTimeout::ThirtyMinutes:return 1'800'000;
+    case SleepTimeout::Never:return std::numeric_limits<std::uint64_t>::max();
+    }
+    return 300'000;
 }
 
-bool ShouldSuspend(const TabActivity& activity, std::uint64_t now_ms,
-                   MemoryMode mode) {
-    if (activity.active || activity.loading || activity.audible ||
-        activity.pinned || activity.protected_from_sleep ||
-        activity.suspend_pending || activity.suspended ||
-        now_ms < activity.last_active_ms) return false;
-    return now_ms - activity.last_active_ms >= SuspendDelayMs(mode);
+std::uint32_t PerformanceTickIntervalMs(SleepTimeout timeout) {
+    switch(timeout){
+    case SleepTimeout::OneMinute:return 10'000;
+    case SleepTimeout::FiveMinutes:return 30'000;
+    case SleepTimeout::FifteenMinutes:return 60'000;
+    case SleepTimeout::ThirtyMinutes:return 60'000;
+    case SleepTimeout::Never:return 0;
+    }
+    return 30'000;
+}
+
+bool ShouldSuspend(const TabActivity& activity, std::uint64_t now_ms, SleepTimeout timeout) {
+    if(timeout==SleepTimeout::Never)return false;
+    if (activity.active || activity.loading || activity.audible || activity.pinned || activity.protected_from_sleep ||
+        activity.suspend_pending || activity.suspended || now_ms < activity.last_active_ms) return false;
+    return now_ms - activity.last_active_ms >= SuspendDelayMs(timeout);
+}
+
+bool ShouldSuspend(const TabActivity& activity, std::uint64_t now_ms, MemoryMode mode) {
+    return ShouldSuspend(activity,now_ms,mode==MemoryMode::Saver?SleepTimeout::OneMinute:SleepTimeout::FiveMinutes);
 }
 
 }  // namespace webcom

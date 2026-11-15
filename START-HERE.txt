@@ -1,4 +1,6 @@
-WebCom v2 for Windows
+WebCom v3 for Windows
+
+IMPORTANT: build from this v3 folder. Do not point build.cmd at an older v2/0.8 source extraction.
 
 NEW CONTRIBUTORS / GITHUB USERS
 1. Read README.md
@@ -14,5 +16,14 @@ BUILD HELP
 Every build writes build-last.log. If compilation fails, report the first compiler/linker error block from that file.
 
 PROJECT STATUS
-WebCom v2 is a public-beta native C++20/Win32 browser using Microsoft Edge WebView2 for web rendering.
+WebCom v3 is a public-beta native C++20/Win32 browser using Microsoft Edge WebView2 for web rendering.
 See docs/PUBLIC-BETA-CHECKLIST.md for release acceptance.
+
+RELEASE CANDIDATE:
+Before publishing a signed WebCom v3 installer, run scripts\Test-ReleaseCandidate.ps1 against that exact installer and its matching manifest. See docs\RELEASE-CANDIDATE.md. Do not silently skip previous-version upgrade QA; provide -PreviousInstaller or explicitly use -NoPreviousSignedBuild when no prior signed release exists.
+MSVC WARNING POLICY:
+Normal build.cmd runs treat WebCom-owned MSVC warnings as errors. Use -AllowCompilerWarnings only for diagnosis; never use it for Release Candidate/public-release sign-off.
+
+
+PACKAGE INTEGRITY:
+Latest-44 verifies every staged Windows package before ZIP creation. Signed release builds additionally produce signed-dist-verification.json, which must remain beside the installer for Release Candidate sign-off. The RC gate confirms the installer contains the exact signed WebCom.exe that passed staged-package verification. See docs\BUILD-PACKAGE-INTEGRITY.md.

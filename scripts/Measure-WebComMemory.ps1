@@ -14,7 +14,10 @@ param(
     [ValidateRange(0, 1048576)]
     [double]$PrivateCommitBudgetMiB = 0,
     [switch]$FailOnBudgetExceeded,
-    [string]$CsvPath
+    [ValidateSet('unspecified','one-tab','multi-tab','sleeping-tabs','split-view','multi-profile','custom')]
+    [string]$Scenario = 'unspecified',
+    [string]$CsvPath,
+    [string]$JsonPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,6 +31,7 @@ if ($Watch -and $FailOnBudgetExceeded) {
 Write-Host 'WebCom memory: host process plus its WebView2 descendants.'
 Write-Host 'Working-set totals can count shared pages more than once. Private commit is allocated private memory, not physical RAM in use.'
 Write-Host 'No command lines, page titles, URLs, credentials, or browsing data are collected.'
+Write-Host ("Scenario: {0}" -f $Scenario)
 if ($PrivateCommitBudgetMiB -gt 0) { Write-Host ("Private-commit budget: {0:N2} MiB" -f $PrivateCommitBudgetMiB) }
 if ($WorkingSetBudgetMiB -gt 0) { Write-Host ("Working-set budget: {0:N2} MiB" -f $WorkingSetBudgetMiB) }
 
@@ -127,6 +131,7 @@ function Get-WebComMemorySample {
     $privateCommitOver = $PrivateCommitBudgetMiB -gt 0 -and $privateCommitMiB -gt $PrivateCommitBudgetMiB
     $summary = [pscustomobject]@{
         Timestamp = (Get-Date).ToString('o')
+        Scenario = $Scenario
         RootProcessIds = (($browserRoots | ForEach-Object { [int]$_.ProcessId } | Sort-Object) -join ';')
         ProcessCount = $records.Count
         WebViewProcessCount = $webViewProcessCount
@@ -199,9 +204,37 @@ if (-not $Watch -and $summaries.Count -gt 0) {
     $privateAverage = ($private | Measure-Object -Average).Average
     $workingPeak = ($working | Measure-Object -Maximum).Maximum
     $privatePeak = ($private | Measure-Object -Maximum).Maximum
+    $workingSorted = @($working | Sort-Object)
+    $privateSorted = @($private | Sort-Object)
+    $workingMedian = $workingSorted[[Math]::Floor(($workingSorted.Count - 1) / 2)]
+    $privateMedian = $privateSorted[[Math]::Floor(($privateSorted.Count - 1) / 2)]
+    $p95Index = [Math]::Min($workingSorted.Count - 1, [Math]::Ceiling($workingSorted.Count * 0.95) - 1)
+    $workingP95 = $workingSorted[$p95Index]
+    $privateP95 = $privateSorted[[Math]::Min($privateSorted.Count - 1, [Math]::Ceiling($privateSorted.Count * 0.95) - 1)]
     Write-Host ''
-    Write-Host ("SUMMARY: {0} samples | avg working set {1:N2} MiB | peak {2:N2} MiB | avg private commit {3:N2} MiB | peak {4:N2} MiB" -f `
-        $summaries.Count, $workingAverage, $workingPeak, $privateAverage, $privatePeak)
+    Write-Host ("SUMMARY [{0}]: {1} samples | avg WS {2:N2} MiB | median {3:N2} | p95 {4:N2} | peak {5:N2} | avg private {6:N2} MiB | median {7:N2} | p95 {8:N2} | peak {9:N2}" -f `
+        $Scenario, $summaries.Count, $workingAverage, $workingMedian, $workingP95, $workingPeak, $privateAverage, $privateMedian, $privateP95, $privatePeak)
+
+    if ($JsonPath) {
+        $absoluteJsonPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($JsonPath)
+        $jsonParent = Split-Path -Parent $absoluteJsonPath
+        if ($jsonParent -and -not (Test-Path -LiteralPath $jsonParent)) {
+            New-Item -ItemType Directory -Path $jsonParent -Force | Out-Null
+        }
+        $report = [ordered]@{
+            schema = 'webcom-memory-report-v1'
+            scenario = $Scenario
+            generatedAt = (Get-Date).ToString('o')
+            sampleCount = $summaries.Count
+            budgets = [ordered]@{ workingSetMiB = $WorkingSetBudgetMiB; privateCommitMiB = $PrivateCommitBudgetMiB }
+            budgetExceeded = $budgetExceeded
+            workingSetMiB = [ordered]@{ average = [Math]::Round($workingAverage,2); median = [Math]::Round($workingMedian,2); p95 = [Math]::Round($workingP95,2); peak = [Math]::Round($workingPeak,2) }
+            privateCommitMiB = [ordered]@{ average = [Math]::Round($privateAverage,2); median = [Math]::Round($privateMedian,2); p95 = [Math]::Round($privateP95,2); peak = [Math]::Round($privatePeak,2) }
+            samples = @($summaries | ForEach-Object { $_ | Select-Object * -ExcludeProperty Records })
+        }
+        $report | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $absoluteJsonPath -Encoding UTF8
+        Write-Host "JSON report: $absoluteJsonPath"
+    }
 }
 
 if ($FailOnBudgetExceeded -and $budgetExceeded) {

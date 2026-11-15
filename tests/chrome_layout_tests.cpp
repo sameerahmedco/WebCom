@@ -45,6 +45,13 @@ int main() {
         "tab hover animation finishes on the destination tab");
     Check(ChromeHoverAmount(4,2,4,500)==100 && ChromeHoverAmount(7,2,4,500)==0,
         "tab hover animation clamps elapsed time without leaking to other tabs");
+    Check(ChromeTabSelectionDuration(true,false)==140,
+        "changed tab selections retain the compact transition duration");
+    Check(ChromeTabSelectionDuration(false,false)==0 && ChromeTabSelectionDuration(true,true)==0,
+        "same-tab selection and reduced motion skip tab selection animation");
+    Check(ChromeShouldAnimateReflow(true,false) && !ChromeShouldAnimateReflow(false,false) &&
+          !ChromeShouldAnimateReflow(true,true),
+        "tab reflow animation requires geometry changes and full-motion mode");
 
     bool fields_fit=true, buttons_clear=true, focus_stable=true;
     for(int width:widths)for(int preferred:{36,104,140,500})for(bool home:{false,true})for(bool downloads:{false,true}){

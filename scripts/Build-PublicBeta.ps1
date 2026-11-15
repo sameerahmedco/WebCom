@@ -1,5 +1,5 @@
 param(
-    [string]$Version = '2.0.0',
+    [string]$Version = '3.0.0',
     [ValidateSet('stable','beta')][string]$Channel = 'stable',
     [Parameter(Mandatory=$true)][string]$StableManifestUrl,
     [string]$BetaManifestUrl = '',
@@ -30,6 +30,8 @@ $dist = Join-Path $root 'dist\WebCom'
 if ($LASTEXITCODE -ne 0) { Fail "signed installer build exited with $LASTEXITCODE" }
 
 $installer = Join-Path ([System.IO.Path]::GetFullPath((Join-Path (Get-Location) $OutputDir))) "WebCom-Setup-$Version-x64.exe"
+$signedDistReport = Join-Path ([System.IO.Path]::GetFullPath((Join-Path (Get-Location) $OutputDir))) 'signed-dist-verification.json'
+if (-not (Test-Path -LiteralPath $signedDistReport -PathType Leaf)) { Fail 'signed dist verification report was not produced' }
 $manifestRelative = Join-Path $OutputDir "$Channel.v2.txt"
 $manifest = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $manifestRelative))
 & (Join-Path $PSScriptRoot 'New-ReleaseManifest.ps1') -Package $installer -Version $Version -Channel $Channel `
@@ -41,4 +43,5 @@ if ($LASTEXITCODE -ne 0) { Fail "release package verification exited with $LASTE
 Write-Host 'WebCom public-beta release artifacts are ready.' -ForegroundColor Green
 Write-Host "Installer: $installer"
 Write-Host "Manifest:  $manifest"
-Write-Host 'Publish the installer and manifest only after the Windows acceptance checklist passes.'
+Write-Host "Build verification: $signedDistReport"
+Write-Host 'Do not publish yet. Run scripts\Test-ReleaseCandidate.ps1 against the signed installer/manifest and publish only after that gate passes.'

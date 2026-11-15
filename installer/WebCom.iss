@@ -1,11 +1,11 @@
 #ifndef AppVersion
-  #define AppVersion "2.0.0"
+  #define AppVersion "3.0.0"
 #endif
 #ifndef SourceDir
   #define SourceDir "..\dist\WebCom"
 #endif
 #ifndef VersionNumeric
-  #define VersionNumeric "2.0.0"
+  #define VersionNumeric "3.0.0"
 #endif
 #ifndef OutputDir
   #define OutputDir "..\release"

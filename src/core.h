@@ -33,6 +33,7 @@ std::string UnescapeField(std::string_view input);
 bool IsValidProfileName(std::string_view name);
 
 enum class MemoryMode { Balanced, Saver };
+enum class SleepTimeout { OneMinute, FiveMinutes, FifteenMinutes, ThirtyMinutes, Never };
 
 struct TabActivity {
     bool active = false;
@@ -46,7 +47,11 @@ struct TabActivity {
 };
 
 std::uint64_t SuspendDelayMs(MemoryMode mode);
+std::uint64_t SuspendDelayMs(SleepTimeout timeout);
+std::uint32_t PerformanceTickIntervalMs(SleepTimeout timeout);
 bool ShouldSuspend(const TabActivity& activity, std::uint64_t now_ms,
                    MemoryMode mode);
+bool ShouldSuspend(const TabActivity& activity, std::uint64_t now_ms,
+                   SleepTimeout timeout);
 
 }  // namespace webcom

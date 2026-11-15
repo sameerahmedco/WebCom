@@ -6,9 +6,12 @@
 #endif
 #include "app.h"
 #include "launch_request.h"
+#include "startup_model.h"
 #include <shellapi.h>
 #include <shobjidl.h>
 #include <exception>
+#include <filesystem>
+#include <memory>
 #include <string>
 
 namespace {
@@ -23,6 +26,12 @@ std::string Utf8Argument(std::wstring_view value) {
         static_cast<int>(value.size()), encoded.data(), size, nullptr, nullptr);
     return encoded;
 }
+
+bool QaModeEnabled() {
+    wchar_t value[8]{};
+    const DWORD length = GetEnvironmentVariableW(L"WEBCOM_QA_MODE", value, 8);
+    return length == 1 && value[0] == L'1';
+}
 }
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
@@ -34,6 +43,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
     std::wstring address;
     std::wstring profile;
     std::wstring argument_error;
+    std::filesystem::path qa_data_root;
+    bool qa_mode = false;
     bool start_private = false;
     bool show_help = false;
     bool address_supplied = false;
@@ -42,6 +53,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
         for (int i = 1; i < argument_count; ++i) {
             if (wcscmp(arguments[i], L"--private") == 0) start_private = true;
             else if (wcscmp(arguments[i], L"--help") == 0) show_help = true;
+            else if (wcscmp(arguments[i], L"--qa-data-root") == 0) {
+                if (qa_mode || i + 1 >= argument_count || wcsncmp(arguments[i + 1], L"--", 2) == 0) {
+                    argument_error = L"The QA data-root option requires one path.";
+                    break;
+                }
+                if (!QaModeEnabled()) {
+                    argument_error = L"The QA data-root option is available only to the Windows acceptance harness.";
+                    break;
+                }
+                qa_data_root = arguments[++i];
+                qa_mode = true;
+            }
             else if (wcscmp(arguments[i], L"--profile") == 0) {
                 if (profile_supplied || i + 1 >= argument_count || wcsncmp(arguments[i + 1], L"--", 2) == 0) {
                     argument_error = L"Use --profile followed by one profile name.\nExample: WebCom --profile Work";
@@ -55,7 +78,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
                     wcscmp(arguments[i + 1], L"--private") == 0 ||
                     wcscmp(arguments[i + 1], L"--help") == 0 ||
                     wcscmp(arguments[i + 1], L"--profile") == 0 ||
-                    wcscmp(arguments[i + 1], L"--url") == 0) {
+                    wcscmp(arguments[i + 1], L"--url") == 0 ||
+                    wcscmp(arguments[i + 1], L"--qa-data-root") == 0) {
                     argument_error = L"Use --url followed by one address.\nExample: WebCom --private --url https://example.com";
                     break;
                 }
@@ -85,6 +109,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
         return 0;
     }
     if (address.size() > 16384) argument_error = L"The address is too long. WebCom accepts up to 16,384 characters.";
+    if (qa_mode && argument_error.empty()) {
+        std::error_code path_error;
+        const auto absolute_root = std::filesystem::absolute(qa_data_root, path_error).lexically_normal();
+        const auto temp_root = std::filesystem::temp_directory_path(path_error).lexically_normal();
+        if (path_error || !webcom::IsAcceptanceDataRootAllowed(absolute_root, temp_root)) {
+            argument_error = L"The QA data root must be a direct temporary-folder child named WebCom-Acceptance-<id>.";
+        } else {
+            qa_data_root = absolute_root;
+            std::filesystem::create_directories(qa_data_root, path_error);
+            if (path_error) argument_error = L"The QA data root could not be created.";
+        }
+    }
     const std::string encoded_profile = Utf8Argument(profile);
     const std::string encoded_address = Utf8Argument(address);
     if (profile_supplied && !webcom::IsValidProfileName(encoded_profile))
@@ -93,17 +129,20 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
     const auto launch_packet = webcom::EncodeLaunchRequest({encoded_profile, encoded_address, start_private});
     if (launch_packet.empty() && argument_error.empty()) argument_error = L"The launch request contains invalid text.";
     if (!argument_error.empty()) {
-        MessageBoxW(nullptr, argument_error.c_str(), L"WebCom", MB_OK | MB_ICONERROR);
+        if (!qa_mode) MessageBoxW(nullptr, argument_error.c_str(), L"WebCom", MB_OK | MB_ICONERROR);
         return 2;
     }
 
-    // One owner of the session file and user-data folder per Windows session.
-    HANDLE instance_mutex = CreateMutexW(nullptr, FALSE, L"Local\\WebCom.Windows.v01");
+    // Acceptance launches use an isolated lock so they can coexist with a real
+    // browser session without intercepting or sending normal launch IPC.
+    const wchar_t* mutex_name = qa_mode ? L"Local\\WebCom.Windows.Acceptance.v01" : L"Local\\WebCom.Windows.v01";
+    HANDLE instance_mutex = CreateMutexW(nullptr, FALSE, mutex_name);
     if (!instance_mutex) {
-        MessageBoxW(nullptr, L"WebCom could not create its startup lock.", L"WebCom", MB_ICONERROR);
+        if (!qa_mode) MessageBoxW(nullptr, L"WebCom could not create its startup lock.", L"WebCom", MB_ICONERROR);
         return 1;
     }
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        if (qa_mode) { CloseHandle(instance_mutex); return 3; }
         int result = 0;
         if (HWND existing = FindWindowW(webcom::BrowserApp::WindowClass, nullptr)) {
             // The receiver is merely an IPC entry point, not necessarily the
@@ -136,18 +175,20 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
     const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(com)) {
         CloseHandle(instance_mutex);
-        MessageBoxW(nullptr, L"Windows could not initialize WebCom's browser thread.", L"WebCom", MB_ICONERROR);
+        if (!qa_mode) MessageBoxW(nullptr, L"Windows could not initialize WebCom's browser thread.", L"WebCom", MB_ICONERROR);
         return 1;
     }
     int exit_code = 0;
     try {
-        webcom::BrowserApp app(instance);
-        if (!app.Create(show_command, address, start_private, profile)) exit_code = 1;
+        std::unique_ptr<webcom::BrowserApp> app = qa_mode
+            ? std::make_unique<webcom::BrowserApp>(instance, qa_data_root)
+            : std::make_unique<webcom::BrowserApp>(instance);
+        if (!app->Create(show_command, address, start_private, profile)) exit_code = 1;
         else {
             MSG message{};
             BOOL result = 0;
             while ((result = GetMessageW(&message, nullptr, 0, 0)) > 0) {
-                if (!app.HandleKeyMessage(message)) {
+                if (!app->HandleKeyMessage(message)) {
                     TranslateMessage(&message);
                     DispatchMessageW(&message);
                 }
@@ -155,9 +196,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
             exit_code = result == -1 ? 1 : static_cast<int>(message.wParam);
         }
     } catch (const std::exception&) {
-        MessageBoxW(nullptr,
-            L"WebCom could not start. Check that your Windows user has a writable Local AppData folder.",
-            L"WebCom", MB_OK | MB_ICONERROR);
+        if (!qa_mode) {
+            MessageBoxW(nullptr,
+                L"WebCom could not start. Check that your Windows user has a writable Local AppData folder.",
+                L"WebCom", MB_OK | MB_ICONERROR);
+        }
         exit_code = 1;
     }
     CoUninitialize();

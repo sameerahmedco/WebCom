@@ -405,7 +405,7 @@ LRESULT CALLBACK WindowProc(HWND window,UINT message,WPARAM wparam,LPARAM lparam
         case WM_MOUSEWHEEL:return SendMessageW(state->list,message,wparam,lparam);
         case WM_SETFOCUS:if(state->edit)SetFocus(state->edit);return 0;
         case WM_ACTIVATE:if(LOWORD(wparam)==WA_INACTIVE)state->End();return 0;
-        case WM_CANCELMODE:case WM_CLOSE:case WM_DISPLAYCHANGE:case WM_DPICHANGED:state->End();return 0;
+        case WM_CANCELMODE:case WM_CLOSE:case WM_DISPLAYCHANGE:case WM_DPICHANGED:case WM_SETTINGCHANGE:case WM_THEMECHANGED:case WM_SYSCOLORCHANGE:state->End();return 0;
         case WM_DESTROY:state->done=true;return 0;
         case WM_NCDESTROY:state->window=nullptr;SetWindowLongPtrW(window,GWLP_USERDATA,0);break;
         default:break;

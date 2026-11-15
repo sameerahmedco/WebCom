@@ -121,10 +121,10 @@ bool IsValidTitle(std::string_view title) {
 }
 
 bool IsRestorableUrl(std::string_view url) {
-    constexpr std::array<const char*, 14> internal_pages{
+    constexpr std::array<const char*, 16> internal_pages{
         "webcom:newtab", "webcom:welcome", "webcom:history", "webcom:downloads",
-        "webcom:settings", "webcom:shortcuts", "webcom:diagnostics", "webcom:recovery", "webcom:updates", "webcom:extensions",
-        "webcom:bookmarks", "webcom:profiles", "webcom:sessions", "webcom:privacy"
+        "webcom:settings", "webcom:passwords", "webcom:shortcuts", "webcom:diagnostics", "webcom:recovery", "webcom:updates", "webcom:extensions",
+        "webcom:bookmarks", "webcom:profiles", "webcom:sessions", "webcom:privacy", "webcom:about"
     };
     for (const char* page : internal_pages) if (url == page) return true;
     if (url.empty() || url.size() > kMaxUrlBytes || !IsValidUtf8(url)) return false;

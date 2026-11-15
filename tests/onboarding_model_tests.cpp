@@ -13,6 +13,13 @@ int main(){
     using namespace webcom;
     const auto root=std::filesystem::temp_directory_path()/"webcom-onboarding-tests";
     std::error_code ec;std::filesystem::remove_all(root,ec);
+    const auto empty_progress=BuildOnboardingProgress(false,0,1,false);
+    Check(empty_progress.completed==0&&empty_progress.total==4,"setup progress starts incomplete");
+    const auto partial_progress=BuildOnboardingProgress(true,3,2,false);
+    Check(partial_progress.completed==3&&partial_progress.default_browser&&partial_progress.bookmarks_ready&&partial_progress.workspaces_ready&&!partial_progress.updates_ready,"setup progress reflects browser bookmarks and workspaces");
+    const auto full_progress=BuildOnboardingProgress(true,1,3,true);
+    Check(full_progress.completed==4&&full_progress.updates_ready,"setup progress reaches complete");
+
     Check(!LoadOnboardingState(root).welcome_seen,"missing onboarding state defaults unseen");
     std::string error;
     Check(SaveOnboardingState(root,{true},&error),"welcome seen state saves");

@@ -1,6 +1,20 @@
 // Per-profile appearance belongs to the window, never to mutable global colors.
+void BrowserApp::Impl::RefreshSystemAccessibility() {
+    system_high_contrast_ = SystemHighContrastEnabled();
+    system_animations_enabled_ = SystemClientAnimationsEnabled();
+    remote_session_ = GetSystemMetrics(SM_REMOTESESSION) != 0;
+}
+
+AccessibilityPolicy BrowserApp::Impl::AccessibilityPolicyNow() const {
+    return ResolveAccessibilityPolicy({appearance_.reduce_motion, appearance_.high_contrast,
+        system_animations_enabled_, system_high_contrast_, remote_session_});
+}
+
+bool BrowserApp::Impl::ReducedMotionActive() const { return AccessibilityPolicyNow().reduce_motion; }
+bool BrowserApp::Impl::HighContrastActive() const { return AccessibilityPolicyNow().high_contrast; }
+
 void BrowserApp::Impl::ApplyAppearance() {
-    auto effective=appearance_;if(SystemHighContrastEnabled())effective.high_contrast=true;
+    auto effective=appearance_;effective.high_contrast=HighContrastActive();
     palette_=MakePalette(effective,profile_name_);
     kCaption=NativeColor(palette_.caption);kFrame=NativeColor(palette_.frame);
     kSurface=NativeColor(palette_.surface);kHover=NativeColor(palette_.hover);
@@ -9,7 +23,7 @@ void BrowserApp::Impl::ApplyAppearance() {
     const auto profile_rgb=ProfileColor(appearance_,profile_name_);
     profile_color_=NativeColor(profile_rgb);profile_ink_=NativeColor(ContrastInk(profile_rgb));
     show_bookmarks_=appearance_.show_bookmarks;
-    if(appearance_.reduce_motion){
+    if(ReducedMotionActive()){
         tab_transition_until_=0;hover_animation_start_=0;hover_animation_from_=-1;hover_animation_to_=-1;
         tab_reflow_start_=0;tab_reflow_from_.clear();omnibox_hover_start_=0;omnibox_hover_from_=-1;omnibox_hover_to_=-1;
         if(window_)KillTimer(window_,kAnimationFrame);
@@ -67,8 +81,10 @@ void BrowserApp::Impl::AppearanceOptions(UINT section) {
             {ThemeMenu,L"Dark theme",Wide(ThemeName(appearance_.theme))+L"  ›",L""},
             {ProfileColorMenu,L"Profile color",L"›",L""},
             {ToggleBookmarks,L"Show bookmarks bar",L"Ctrl+Shift+B",L"",true,show_bookmarks_},
-            {ToggleReducedMotion,L"Reduce WebCom motion",L"Disables browser chrome animations",L"",true,appearance_.reduce_motion},
-            {ToggleHighContrast,L"High contrast WebCom chrome",SystemHighContrastEnabled()?L"Windows High Contrast is currently active":L"Black/white/yellow browser chrome",L"",true,appearance_.high_contrast || SystemHighContrastEnabled()},
+            {ToggleReducedMotion,L"Reduce WebCom motion",
+                appearance_.reduce_motion?L"Enabled for this profile":!system_animations_enabled_?L"Windows animations are currently off":remote_session_?L"Reduced automatically in Remote Desktop":L"Disables browser chrome animations",
+                L"",true,ReducedMotionActive()},
+            {ToggleHighContrast,L"High contrast WebCom chrome",system_high_contrast_?L"Windows High Contrast is currently active":L"Black/white/yellow browser chrome",L"",true,HighContrastActive()},
             divider,
             {AppearanceReset,L"Reset appearance",L"",L""}
         };
@@ -80,7 +96,7 @@ void BrowserApp::Impl::AppearanceOptions(UINT section) {
     {
         menu_open_=true;
         struct Reset{bool& value;~Reset(){value=false;}}reset{menu_open_};
-        selected=ShowDarkMenu(owner,anchor,items,dpi_,354,true,&palette_);
+        selected=ShowDarkMenu(owner,anchor,items,dpi_,354,true,&palette_,ReducedMotionActive());
     }
     if(!closing_ && window_==owner && IsWindow(owner) && selected)Dispatch(selected);
 }

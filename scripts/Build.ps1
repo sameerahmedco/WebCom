@@ -9,7 +9,8 @@ param(
     [string]$BetaManifestUrl = '',
     [string]$PublisherSha256 = '',
     [switch]$SkipTests,
-    [switch]$SkipUiTests
+    [switch]$SkipUiTests,
+    [switch]$AllowCompilerWarnings
 )
 
 $ErrorActionPreference = 'Stop'
@@ -82,10 +83,14 @@ try {
     }
     $buildDirectory = Join-Path $repositoryRoot "build\windows-$Architecture-$Configuration"
     Write-Host "Building WebCom $Architecture ($Configuration)..."
+    if ($AllowCompilerWarnings) {
+        Write-Warning 'Diagnostic mode: WebCom native /WX is disabled. Do not use this switch for Release Candidate or public-release sign-off.'
+    }
     $configureArgs = @(
         '-S', $repositoryRoot, '-B', $buildDirectory, '-G', 'Ninja',
         "-DCMAKE_MAKE_PROGRAM=$ninjaPath", "-DCMAKE_BUILD_TYPE=$Configuration",
         "-DWEBVIEW2_SDK_DIR=$resolvedSdk", '-DWEBCOM_BUILD_APP=ON', '-DBUILD_TESTING=ON', "-DWEBCOM_BUILD_UI_TESTS=$(if ($SkipUiTests) { 'OFF' } else { 'ON' })",
+        "-DWEBCOM_WARNINGS_AS_ERRORS=$(if ($AllowCompilerWarnings) { 'OFF' } else { 'ON' })",
         "-DWEBCOM_STABLE_MANIFEST_URL=$StableManifestUrl", "-DWEBCOM_BETA_MANIFEST_URL=$BetaManifestUrl", "-DWEBCOM_PUBLISHER_SHA256=$PublisherSha256"
     )
     Invoke-Checked $cmakePath $configureArgs
@@ -142,7 +147,7 @@ try {
             Copy-Item -LiteralPath $documentPath -Destination $packageDirectory -Force
         }
     }
-    foreach ($scriptName in @('Measure-WebComMemory.ps1', 'Open-RuntimeDownload.ps1')) {
+    foreach ($scriptName in @('Measure-WebComMemory.ps1', 'Open-RuntimeDownload.ps1', 'Test-WindowsAcceptance.ps1')) {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $scriptName) -Destination $packageDirectory -Force
     }
     $docsDirectory = Join-Path $repositoryRoot 'docs'
@@ -167,12 +172,35 @@ try {
         "Executable SHA256: $((Get-FileHash -LiteralPath $builtExecutable -Algorithm SHA256).Hash.ToLowerInvariant())",
         $(if (Test-Path -LiteralPath $builtUiTests) { "Native UI harness SHA256: $((Get-FileHash -LiteralPath $builtUiTests -Algorithm SHA256).Hash.ToLowerInvariant())" } else { 'Native UI harness: NOT BUILT' }),
         "Tests: $testResult",
+        "Warnings as errors: $(if ($AllowCompilerWarnings) { 'OFF' } else { 'ON' })",
+        "Update stable manifest: $(if ($StableManifestUrl) { $StableManifestUrl } else { 'NOT CONFIGURED' })",
+        "Update beta manifest: $(if ($BetaManifestUrl) { $BetaManifestUrl } else { 'NOT CONFIGURED' })",
+        "Publisher SHA256: $(if ($PublisherSha256) { $PublisherSha256.ToLowerInvariant() } else { 'NOT CONFIGURED' })",
         'Live-website rendering, DPI transitions, screen-reader behavior and RAM benchmarks require separate Windows acceptance testing.',
         'Native UI checks use isolated temporary data and do not start the WebView2 engine.'
     )
     $buildInfo | Set-Content -LiteralPath (Join-Path $packageDirectory 'docs\BUILD-INFO.txt') -Encoding UTF8
 
-    $packageZip = Join-Path $repositoryRoot "dist\WebCom-Windows-$($Architecture.ToLowerInvariant()).zip"
+    Write-Host 'Verifying staged Windows package integrity...'
+    $verifyPackage = Join-Path $PSScriptRoot 'Verify-BuildPackage.ps1'
+    $verifyArgs = @{
+        DistDir = $packageDirectory
+        RepositoryRoot = $repositoryRoot
+        ExpectedVersion = '3.0.0'
+        ExpectedArchitecture = $Architecture
+        ExpectedConfiguration = $Configuration
+        ExpectedPublisherSha256 = $PublisherSha256
+        OutputJson = (Join-Path $packageDirectory 'docs\PACKAGE-VERIFICATION.json')
+    }
+    if (-not $SkipUiTests) { $verifyArgs.RequireUiTests = $true }
+    if (-not $SkipTests -and -not $crossCompiled) { $verifyArgs.RequireTestsPassed = $true }
+    if ($Configuration -eq 'Release' -and $StableManifestUrl -and $PublisherSha256 -and -not $SkipUiTests -and -not $SkipTests -and -not $crossCompiled -and -not $AllowCompilerWarnings) {
+        $verifyArgs.RequireReleaseReady = $true
+    }
+    & $verifyPackage @verifyArgs
+    if ($LASTEXITCODE -ne 0) { throw "staged package verification exited with $LASTEXITCODE" }
+
+    $packageZip = Join-Path $repositoryRoot "dist\WebCom-v3-Windows-$($Architecture.ToLowerInvariant()).zip"
     Compress-Archive -LiteralPath $packageDirectory -DestinationPath $packageZip -Force
     Write-Host ''
     Write-Host "Build complete: $(Join-Path $packageDirectory 'WebCom.exe')"

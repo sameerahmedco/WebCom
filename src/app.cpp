@@ -5,10 +5,19 @@
 #include "dark_menu.h"
 #include "render_helpers.h"
 #include "tab_search.h"
+#include "tab_batch_model.h"
 #include "launch_request.h"
 #include "appearance.h"
+#include "accessibility_model.h"
+#include "native_accessibility_model.h"
 #include "omnibox_model.h"
 #include "history_model.h"
+#include "home_model.h"
+#include "home_preferences.h"
+#include "performance_preferences.h"
+#include "ad_blocker_preferences.h"
+#include "download_history_model.h"
+#include "recently_closed_model.h"
 #include "site_permissions.h"
 #include "saved_sessions.h"
 #include "reader_model.h"
@@ -25,10 +34,12 @@
 #include "runtime_log.h"
 #include "update_transport_win32.h"
 #include "extension_model.h"
+#include "extension_view_model.h"
 #include "extension_sources.h"
 #include "release_config.h"
 #include "onboarding_model.h"
 #include "diagnostics_model.h"
+#include "memory_snapshot_model.h"
 #include "diagnostics_bundle.h"
 #include "annotation_editor.h"
 #include "win32_com_compat.h"
@@ -92,23 +103,23 @@ constexpr UINT kPageFullscreen = WM_APP + 4;
 constexpr UINT kSelectTab = WM_APP + 5;
 constexpr UINT kUpdateCheckComplete = WM_APP + 6;
 constexpr UINT kUpdateStageComplete = WM_APP + 7;
-constexpr std::string_view kWebComVersion = "2.0.0";
+constexpr std::string_view kWebComVersion = "3.0.0";
 constexpr COLORREF kCaption = RGB(31, 32, 32);
 constexpr COLORREF kFrame = RGB(60, 60, 60);
 constexpr COLORREF kAccent = RGB(171, 199, 248);
 constexpr std::size_t kMaxTabs = 200;
 enum Command : UINT {
     Back = 100, Forward, Reload, Home, NewTab, Address, Profile, Saver, More,
-    HomeSearch, HomeGo, Google, YouTube, GitHub, TabStrip,
+    HomeSearch, HomeGo, Google, YouTube, GitHub, TabStrip, ToastClick, OpenToastDownload,
     TabList, MinimizeWindow, MaximizeWindow, CloseWindow, AiMode, BookmarkPage, BookmarksOverflow, SiteInfo, DownloadsQuick,
     CloseCurrent = 200, ReopenTab, PrivateTab, ProfilesMenu, AddProfile,
-    ToggleSaver, PinTab, KeepAwake, SuspendNow, DiscardTab, DuplicateTab,
+    ToggleSaver, PerformanceMenu, SleepAfter1m, SleepAfter5m, SleepAfter15m, SleepAfter30m, SleepNever, ToggleNeverSleepSite, ClearNeverSleepSites, ToggleAdBlockerSite, ClearAdBlockerSiteExceptions, PinTab, KeepAwake, SuspendNow, DiscardTab, DuplicateTab, CloseDuplicateTabs, SleepOtherTabs,
     MemoryReport, Downloads, TogglePasswords, ToggleAutofill, ClearSavedPasswords, ClearAutofillData, OpenInDefault, About,
     FocusAddress, NextTab, PreviousTab, FullScreen, Exit, ClearData,
     EngineCrashed = 400, TabCrashed, InstallRuntime,
-    BookmarkMenu, PasswordMenu, SettingsMenu, ShortcutsPage, DiagnosticsPage, RecoveryPage, UpdatesPage, ExtensionsPage, ExtensionsRefresh, ExtensionsLoadUnpacked, WelcomePage, OpenDefaultApps, WelcomeStartBrowsing, CopyDiagnostics, ExportDiagnosticsBundle, ExportRecoveryReport, OpenDataFolder, UpdateChannelMenu, UpdateChannelStable, UpdateChannelBeta, ToggleUpdateChecks, CheckForUpdates, StageAvailableUpdate, InstallStagedUpdate, RollbackPreviousVersion, ClearUpdateTransaction, ZoomIn, ZoomOut, ZoomReset, PrintPage, OpenFile,
-    SearchInPage, DeveloperTools, HelpMenu, RemoveBookmark, PrivateHelp, History, ClearHistory, HistoryDeleteMatches, HistoryDeleteWeek, HistoryDeleteOlderMonth,
-    ClearDownloadsList, OpenDownloadsFolder, MuteTab, MoveTabLeft, MoveTabRight, NewProfileWindow,
+    BookmarkMenu, PasswordMenu, SettingsMenu, ShortcutsPage, DiagnosticsPage, FeedbackPage, CopyProblemTemplate, RecoveryPage, UpdatesPage, ExtensionsPage, ExtensionsRefresh, ExtensionsLoadUnpacked, ExtensionsFilterAll, ExtensionsFilterEnabled, ExtensionsFilterDisabled, ExtensionsFilterAttention, WelcomePage, OpenDefaultApps, WelcomeStartBrowsing, CopyDiagnostics, ExportDiagnosticsBundle, ExportRecoveryReport, OpenDataFolder, UpdateChannelMenu, UpdateChannelStable, UpdateChannelBeta, ToggleUpdateChecks, CheckForUpdates, StageAvailableUpdate, InstallStagedUpdate, RollbackPreviousVersion, ClearUpdateTransaction, ZoomIn, ZoomOut, ZoomReset, PrintPage, OpenFile,
+    SearchInPage, DeveloperTools, HelpMenu, RemoveBookmark, PrivateHelp, History, ClearHistory, ClearRecentlyClosed, HistoryDeleteMatches, HistoryDeleteWeek, HistoryDeleteOlderMonth,
+    ClearDownloadsList, RetryFailedDownloads, OpenDownloadsFolder, MuteTab, MoveTabLeft, MoveTabRight, NewProfileWindow,
     AppearanceMenu, ThemeMenu, ProfileColorMenu, ToggleBookmarks, ToggleReducedMotion, ToggleHighContrast, ColorAutomatic, ColorCustom, AppearanceReset, BookmarkManager,
     NativeFilter, ImportBookmarks, ExportBookmarks, NewBookmarkFolder, NewTabGroup, RemoveTabGroup,
     ToggleTabGroup, RenameTabGroup, CloseTabGroup, ProfileManager, OpenAllProfiles, CloseOtherProfiles, RenameBookmarkFolderCmd, CreateBookmarkFolderCmd, ResetSitePermissionsCmd,
@@ -117,7 +128,7 @@ enum Command : UINT {
     NextWorkspace, PreviousWorkspace,
     SessionsManager, SaveWorkspaceSession, PrivacyManager, PrivacyRefresh, PrivacyClearAllSiteData, PrivacyResetAllPermissions, ReaderMode, ReaderBackToPage,
     ReaderTextSmaller, ReaderTextLarger, ReaderWidthCycle, ReaderFontToggle, ReaderCopyText, ReaderSaveText, ReaderExportMenu, ReaderSaveHtml, ReaderSaveMarkdown,
-    StartupMenu, StartupContinue, StartupNewTab, StartupSpecificPages, StartupAddCurrentPage, StartupAddPage, StartupClearPages, FocusCycle, FocusCycleReverse,
+    StartupMenu, StartupContinue, StartupNewTab, StartupSpecificPages, StartupAddCurrentPage, StartupAddPage, StartupClearPages, FocusCycle, FocusCycleReverse, AddHomeShortcutCmd,
     ProfileBase = 1000, SelectTabBase = 2000, BookmarkBase = 3000, OpenTabBase = 4000,
     ThemeBase = 5000, ColorBase = 5100, HistoryBase = 6000, DownloadBase = 7000, RemoveBookmarkBase = 8000,
     MoveProfileBase = 9000, GroupBase = 10000, BookmarkFolderBase = 11000, BookmarkBarFolderBase = 12000,
@@ -125,7 +136,8 @@ enum Command : UINT {
     PauseDownloadBase = 15000, CancelDownloadBase = 15300, RetryDownloadBase = 15600,
     SitePermissionBase = 16000, MoveWorkspaceBase = 17000, WorkspaceBase = 18000, WorkspaceColorBase = 18100,
     SessionBase = 19000, DeleteSessionBase = 19200, PrivacyCookieBase = 19400, PrivacyPermissionBase = 19600, BookmarkFolderDropBase = 20000, DeleteBookmarkFolderBase = 20200, StartupPageBase = 20400, ExtensionToggleBase = 21000, ExtensionRemoveBase = 21200, ExtensionDetailsBase = 21400,
-    ExtensionOpenFolderBase = 21600, ExtensionReloadBase = 21800, ExtensionSourceDetailsBase = 22000, ExtensionForgetSourceBase = 22200
+    ExtensionOpenFolderBase = 21600, ExtensionReloadBase = 21800, ExtensionSourceDetailsBase = 22000, ExtensionForgetSourceBase = 22200,
+    HomeRecentBase = 22400, HomeShortcutBase = 22500, HomeShortcutRemoveBase = 22600, HomeRecentPinBase = 22700, HomeRecentHideBase = 22800, HistoryHostFilterBase = 22900, DeleteHistoryHostBase = 23000, OpenDownloadSourceBase = 23200, ReopenClosedBase = 23400
 };
 
 COLORREF NativeColor(std::uint32_t rgb) {
@@ -201,6 +213,12 @@ bool SystemHighContrastEnabled() {
            (state.dwFlags & HCF_HIGHCONTRASTON) != 0;
 }
 
+bool SystemClientAnimationsEnabled() {
+    BOOL enabled = TRUE;
+    if (!SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &enabled, 0)) return true;
+    return enabled != FALSE;
+}
+
 bool TryGetCookieManager(const ComPtr<ICoreWebView2>& web, ComPtr<ICoreWebView2CookieManager>& manager) {
     manager.Reset();
     if (!web) return false;
@@ -209,7 +227,7 @@ bool TryGetCookieManager(const ComPtr<ICoreWebView2>& web, ComPtr<ICoreWebView2C
     return SUCCEEDED(web2->get_CookieManager(&manager)) && manager.Get() != nullptr;
 }
 
-enum class InternalPage { None, NewTab, Welcome, History, Downloads, Settings, Shortcuts, Diagnostics, Recovery, Updates, Extensions, Bookmarks, Profiles, Sessions, Privacy, Reader };
+enum class InternalPage { None, NewTab, Welcome, History, Downloads, Settings, Passwords, Shortcuts, Diagnostics, Feedback, Recovery, Updates, Extensions, Bookmarks, Profiles, Sessions, Privacy, About, Reader };
 
 InternalPage InternalPageFor(std::wstring_view value) {
     if (IsHome(value)) return InternalPage::NewTab;
@@ -217,8 +235,10 @@ InternalPage InternalPageFor(std::wstring_view value) {
     if (value == L"webcom:history") return InternalPage::History;
     if (value == L"webcom:downloads") return InternalPage::Downloads;
     if (value == L"webcom:settings") return InternalPage::Settings;
+    if (value == L"webcom:passwords") return InternalPage::Passwords;
     if (value == L"webcom:shortcuts") return InternalPage::Shortcuts;
     if (value == L"webcom:diagnostics") return InternalPage::Diagnostics;
+    if (value == L"webcom:feedback") return InternalPage::Feedback;
     if (value == L"webcom:recovery") return InternalPage::Recovery;
     if (value == L"webcom:updates") return InternalPage::Updates;
     if (value == L"webcom:extensions") return InternalPage::Extensions;
@@ -226,6 +246,7 @@ InternalPage InternalPageFor(std::wstring_view value) {
     if (value == L"webcom:profiles") return InternalPage::Profiles;
     if (value == L"webcom:sessions") return InternalPage::Sessions;
     if (value == L"webcom:privacy") return InternalPage::Privacy;
+    if (value == L"webcom:about") return InternalPage::About;
     if (value == L"webcom:reader") return InternalPage::Reader;
     return InternalPage::None;
 }
@@ -239,8 +260,10 @@ std::wstring InternalPageTitle(std::wstring_view value, bool private_mode = fals
     case InternalPage::History: return L"History";
     case InternalPage::Downloads: return L"Downloads";
     case InternalPage::Settings: return L"Settings";
+    case InternalPage::Passwords: return L"Passwords & Autofill";
     case InternalPage::Shortcuts: return L"Keyboard Shortcuts";
     case InternalPage::Diagnostics: return L"Support Diagnostics";
+    case InternalPage::Feedback: return L"Report a Problem";
     case InternalPage::Recovery: return L"Recovery & Reliability";
     case InternalPage::Updates: return L"Updates";
     case InternalPage::Extensions: return L"Extensions";
@@ -248,6 +271,7 @@ std::wstring InternalPageTitle(std::wstring_view value, bool private_mode = fals
     case InternalPage::Profiles: return L"Profiles";
     case InternalPage::Sessions: return L"Saved Sessions";
     case InternalPage::Privacy: return L"Privacy Manager";
+    case InternalPage::About: return L"About WebCom";
     case InternalPage::Reader: return L"Reader Mode";
     default: return std::wstring(value.substr(0, 250));
     }
@@ -553,6 +577,8 @@ struct NameDialog {
     std::wstring value;
     std::wstring initial=L"Work",accept=L"Create";
     bool color_prompt=false;
+    bool free_text=false;
+    unsigned text_limit=40;
     std::vector<std::wstring> existing_names;
     Palette palette=MakePalette(Appearance{},"Default");
     HBRUSH background = CreateSolidBrush(kCaption);
@@ -602,7 +628,7 @@ INT_PTR CALLBACK NameProc(HWND window, UINT message, WPARAM wparam, LPARAM lpara
             DwmSetWindowAttribute(window, 19, &dark, sizeof(dark));
         const HWND edit = GetDlgItem(window, 500);
         SetWindowTheme(edit, L"", L"");
-        SendMessageW(edit, EM_SETLIMITTEXT, state->color_prompt ? 7 : 40, 0);
+        SendMessageW(edit, EM_SETLIMITTEXT, state->free_text ? state->text_limit : (state->color_prompt ? 7 : 40), 0);
         SendMessageW(edit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
                      MAKELPARAM(state->D(2), state->D(2)));
         SetWindowTextW(edit, state->initial.c_str());
@@ -678,15 +704,17 @@ INT_PTR CALLBACK NameProc(HWND window, UINT message, WPARAM wparam, LPARAM lpara
         }
         if (LOWORD(wparam) == IDOK) {
             state->value = ControlText(GetDlgItem(window, 500));
-            const bool valid=state->color_prompt ? ParseHexColor(Utf8(state->value)).has_value() : IsValidProfileName(Utf8(state->value));
+            const bool valid=state->free_text ? !state->value.empty() :
+                (state->color_prompt ? ParseHexColor(Utf8(state->value)).has_value() : IsValidProfileName(Utf8(state->value)));
             if(!valid){
-                SetWindowTextW(GetDlgItem(window,502),state->color_prompt ? L"Enter a six-digit color, for example #A8C7FA." :
-                    L"Use 1-40 letters, numbers, spaces, underscores or hyphens. Avoid leading/trailing spaces and reserved names.");
+                SetWindowTextW(GetDlgItem(window,502),state->free_text ? L"Enter a value before continuing." :
+                    (state->color_prompt ? L"Enter a six-digit color, for example #A8C7FA." :
+                    L"Use 1-40 letters, numbers, spaces, underscores or hyphens. Avoid leading/trailing spaces and reserved names."));
                 SetFocus(GetDlgItem(window,500));
                 SendMessageW(GetDlgItem(window,500),EM_SETSEL,0,-1);
                 return TRUE;
             }
-            if(!state->color_prompt && std::any_of(state->existing_names.begin(),state->existing_names.end(),
+            if(!state->free_text && !state->color_prompt && std::any_of(state->existing_names.begin(),state->existing_names.end(),
                 [&](const auto& name){return _wcsicmp(name.c_str(),state->value.c_str())==0;})){
                 SetWindowTextW(GetDlgItem(window,502),L"That profile already exists. Choose another name.");
                 SetFocus(GetDlgItem(window,500));SendMessageW(GetDlgItem(window,500),EM_SETSEL,0,-1);return TRUE;
@@ -705,7 +733,8 @@ std::optional<std::wstring> AskName(HWND owner, HINSTANCE instance, const Palett
                                   const wchar_t* label=L"&Profile name",
                                   const wchar_t* help=L"Use up to 40 letters, numbers, spaces, underscores or hyphens.",
                                   const wchar_t* initial=L"Work", const wchar_t* accept=L"Create", bool color_prompt=false,
-                                  const std::vector<SavedProfile>* existing_profiles=nullptr) {
+                                  const std::vector<SavedProfile>* existing_profiles=nullptr, bool free_text=false,
+                                  unsigned text_limit=40) {
     // Dialog units and Segoe UI keep keyboard navigation, native accessibility
     // labels and Windows DPI scaling; only surfaces and buttons are custom drawn.
     std::vector<WORD> words;
@@ -729,7 +758,7 @@ std::optional<std::wstring> AskName(HWND owner, HINSTANCE instance, const Palett
     item(WS_TABSTOP | BS_OWNERDRAW, 150, 94, 60, 22, IDOK, 0x80, accept);
     item(WS_TABSTOP | BS_OWNERDRAW, 214, 94, 60, 22, IDCANCEL, 0x80, L"Cancel");
     NameDialog result;
-    result.initial=initial;result.accept=accept;result.color_prompt=color_prompt;
+    result.initial=initial;result.accept=accept;result.color_prompt=color_prompt;result.free_text=free_text;result.text_limit=std::clamp(text_limit,1u,4096u);
     if(existing_profiles)for(const auto& profile:*existing_profiles)result.existing_names.push_back(Wide(profile.name));
     if(palette)result.palette=*palette;
     DeleteObject(result.background);DeleteObject(result.field);
@@ -743,6 +772,29 @@ std::optional<std::wstring> AskName(HWND owner, HINSTANCE instance, const Palett
     return result.value;
 }
 
+std::optional<std::wstring> AskText(HWND owner,HINSTANCE instance,const Palette* palette,
+                                    const wchar_t* title,const wchar_t* label,const wchar_t* help,
+                                    const wchar_t* initial,const wchar_t* accept,unsigned limit=256) {
+    return AskName(owner,instance,palette,title,label,help,initial,accept,false,nullptr,true,limit);
+}
+
+const wchar_t* SleepTimeoutLabel(SleepTimeout timeout) {
+    switch (timeout) {
+    case SleepTimeout::OneMinute: return L"1 minute";
+    case SleepTimeout::FiveMinutes: return L"5 minutes";
+    case SleepTimeout::FifteenMinutes: return L"15 minutes";
+    case SleepTimeout::ThirtyMinutes: return L"30 minutes";
+    case SleepTimeout::Never: return L"Never";
+    }
+    return L"5 minutes";
+}
+
+std::wstring SleepTimeoutSettingsDetail(SleepTimeout timeout) {
+    if (timeout == SleepTimeout::Never) return L"Balanced • automatic tab sleeping off";
+    const std::wstring prefix = timeout == SleepTimeout::OneMinute ? L"Memory Saver • sleeps eligible tabs after " : L"Balanced • sleeps eligible tabs after ";
+    return prefix + SleepTimeoutLabel(timeout);
+}
+
 } // namespace
 
 #include "profile_host_decl.inl"
@@ -752,13 +804,15 @@ public:
     Impl(HINSTANCE instance,const std::shared_ptr<Session>& session,std::string profile)
         : instance_(instance),session_(session),root_(session->root),state_(session->state),profile_name_(std::move(profile)) {
         appearance_=LoadAppearance(root_,profile_name_);
+        home_preferences_=LoadHomePreferences(root_,profile_name_);
+        if (const auto saved_timeout = LoadSleepTimeoutPreference(root_, profile_name_))
+            sleep_timeout_ = *saved_timeout;
+        else
+            sleep_timeout_ = state_.memory_mode == MemoryMode::Saver ? SleepTimeout::OneMinute : SleepTimeout::FiveMinutes;
+        never_sleep_hosts_ = LoadNeverSleepHostsPreference(root_, profile_name_);
+        RefreshSystemAccessibility();
         ApplyAppearance();
         LoadHistory();
-        LoadDownloads();
-        site_permissions_ = LoadSitePermissions(root_, profile_name_);
-        named_sessions_ = LoadNamedSessions(root_, profile_name_);
-        extension_sources_ = LoadExtensionSources(root_, profile_name_);
-        RefreshExtensionSourceHealth();
         update_settings_ = LoadUpdateSettings(root_);
         update_transaction_ = LoadUpdateTransaction(root_);
         update_retry_ = LoadUpdateRetryState(root_);
@@ -772,6 +826,7 @@ public:
 private:
     friend class BrowserApp::Session;
     class TabStripAccessible;
+    class NativeClientAccessible;
     struct CookieSummary {
         std::wstring name;
         std::wstring domain;
@@ -833,7 +888,6 @@ private:
         EventRegistrationToken navigation{}, completed{}, source{}, title_changed{}, history{}, popup{},
             close_requested{}, process_failed{}, accelerator{}, audio{}, muted_changed{}, download{}, fullscreen{}, favicon_changed{}, permission{}, certificate{};
     };
-    struct ClosedTab { std::wstring url; std::wstring title; bool pinned; bool awake; };
     using HistoryEntry = HistoryRecord;
     struct DownloadEntry {
         std::uint64_t id = 0;
@@ -862,13 +916,15 @@ private:
         bool baseline_known = false;
         bool changed = false;
     };
-    struct NativeAction { RECT rect{}; UINT command = 0; };
+    struct NativeAction { RECT rect{}; UINT command = 0; std::wstring name; };
     struct WorkspaceDropTarget { std::size_t workspace_index = 0; RECT rect{}; };
     struct TabReflowOrigin { std::uint64_t id = 0; RECT rect{}; };
     HINSTANCE instance_ = nullptr;
     HWND window_ = nullptr, tab_strip_ = nullptr, address_ = nullptr, home_search_ = nullptr, native_filter_ = nullptr, suggestion_panel_ = nullptr;
     ComPtr<IAccessible> tab_accessible_;
     TabStripAccessible* tab_accessible_impl_ = nullptr;
+    ComPtr<IAccessible> client_accessible_;
+    NativeClientAccessible* client_accessible_impl_ = nullptr;
     HWND tooltips_ = nullptr, toast_ = nullptr, hovered_button_ = nullptr;
     std::vector<HWND> toolbar_;
     std::array<HWND, 4> home_buttons_{};
@@ -889,6 +945,7 @@ private:
     int native_scroll_ = 0;
     int native_page_extent_ = 0;
     UINT hot_native_command_ = 0;
+    UINT focused_native_command_ = 0;
     bool hot_close_ = false, menu_open_ = false, main_menu_active_ = false;
     std::uint64_t dragged_tab_id_ = 0, pressed_close_tab_id_ = 0;
     bool tab_dragging_ = false;
@@ -911,16 +968,26 @@ private:
     const std::string profile_name_;
     Appearance appearance_;
     Palette palette_{};
+    bool system_high_contrast_ = false;
+    bool system_animations_enabled_ = true;
+    bool remote_session_ = false;
     bool show_bookmarks_ = true;
     COLORREF kCaption=0,kFrame=0,kSurface=0,kHover=0,kInk=0,kMuted=0,kAccent=0,kSearch=0,kBorder=0;
     COLORREF profile_color_=0,profile_ink_=0;
     std::uint64_t environment_generation_ = 0;
     std::vector<std::unique_ptr<Tab>> tabs_;
-    std::deque<ClosedTab> closed_tabs_;
+    std::vector<RecentlyClosedEntry> closed_tabs_;
+    bool recently_closed_loaded_ = false;
     std::vector<HistoryEntry> history_entries_;
+    HomePreferences home_preferences_;
+    SleepTimeout sleep_timeout_ = SleepTimeout::FiveMinutes;
+    std::vector<std::string> never_sleep_hosts_;
     std::vector<std::unique_ptr<DownloadEntry>> download_entries_;
+    bool downloads_loaded_ = false;
     std::vector<SitePermissionRule> site_permissions_;
+    bool site_permissions_loaded_ = false;
     std::vector<NamedSession> named_sessions_;
+    bool named_sessions_loaded_ = false;
     std::vector<PrivacyCookieDomain> privacy_cookie_domains_;
     UpdateSettings update_settings_{};
     UpdateTransaction update_transaction_{};
@@ -929,16 +996,21 @@ private:
     ComPtr<ICoreWebView2Profile> extension_profile_;
     bool ad_blocker_starting_ = false;
     bool ad_blocker_ready_ = false;
+    bool ad_blocker_preferences_loaded_ = false;
     bool extension_toggle_pending_ = false;
     std::uint64_t ad_blocker_generation_ = 0;
     std::wstring ad_blocker_id_;
+    ComPtr<ICoreWebView2BrowserExtension> ad_blocker_extension_;
+    std::vector<std::string> ad_blocker_site_exceptions_;
     std::vector<std::function<void()>> ad_blocker_waiters_;
     std::vector<ExtensionEntry> extensions_;
     std::vector<ExtensionSourceRecord> extension_sources_;
+    bool extension_sources_loaded_ = false;
     std::vector<ExtensionSourceHealth> extension_source_health_;
     std::uint64_t extension_bootstrap_tab_id_ = 0;
     bool extensions_loading_ = false;
     bool extensions_supported_ = true;
+    ExtensionViewFilter extension_view_filter_ = ExtensionViewFilter::All;
     std::wstring extensions_status_;
     ReleaseRuntimeConfig update_runtime_config_{};
     std::optional<UpdateManifest> available_update_;
@@ -964,6 +1036,8 @@ private:
     WINDOWPLACEMENT placement_{};
     DWORD saved_style_ = 0;
     std::wstring notice_text_, status_note_;
+    UINT toast_action_command_ = 0;
+    std::uint64_t toast_download_id_ = 0;
     std::uint64_t note_until_ = 0;
     std::uint64_t tab_transition_until_ = 0;
     std::uint64_t hover_animation_start_ = 0;
@@ -1003,6 +1077,10 @@ private:
     void OpenTabsMenu();
     void PreferencesMenu(UINT section);
     void ConfigureTheme(Tab& tab);
+    void RefreshSystemAccessibility();
+    AccessibilityPolicy AccessibilityPolicyNow() const;
+    bool ReducedMotionActive() const;
+    bool HighContrastActive() const;
     void ApplyAppearance();
     bool CommitAppearance(const Appearance& next);
     void AppearanceOptions(UINT section);
@@ -1015,6 +1093,7 @@ private:
     bool Save(bool show_error);
     void Dirty();
     void Note(const std::wstring& text);
+    void NoteAction(const std::wstring& text, UINT command);
     void Notice(const std::wstring& text);
     void FocusOmnibox();
     void UpdateOmniboxSuggestions();
@@ -1027,6 +1106,8 @@ private:
     void Select(std::size_t index);
     void MoveTab(std::uint64_t id, int direction);
     void MoveTabTo(std::uint64_t id, std::size_t target);
+    void CloseDuplicateTabsInWorkspace(std::uint64_t target_id);
+    void SleepOtherTabsInWorkspace(std::uint64_t keep_id);
     void AssignTabGroup(std::uint64_t id, std::wstring group);
     std::vector<std::wstring> TabGroups() const;
     std::vector<std::wstring> WorkspaceNames() const;
@@ -1072,6 +1153,9 @@ private:
     void Close(std::uint64_t id);
     void Release(Tab& tab);
     void Reopen();
+    void ReopenClosedAt(std::size_t index);
+    void EnsureRecentlyClosedLoaded();
+    void SaveRecentlyClosedNow(bool show_error=false);
     void BeginEnvironment();
     void Ensure(Tab& tab);
     void Attach(Tab& tab);
@@ -1081,6 +1165,7 @@ private:
     const SavedProfile* CurrentSavedProfile() const;
     std::wstring ProfileDisplayName(std::string_view profile, const Appearance* known = nullptr) const;
     void Tick();
+    void RefreshPerformanceTimer();
     void Suspend(Tab& tab, bool manual);
     bool HasDownload(Tab& tab);
     void LowMemoryTarget(Tab& tab, bool low);
@@ -1088,6 +1173,17 @@ private:
     void SaveHistory() const;
     void RecordHistory(const Tab& tab);
     void HistoryMenu();
+    bool SaveHomePreferencesNow(bool show_error=true);
+    bool SaveSleepTimeoutNow(bool show_error=true);
+    bool SaveNeverSleepHostsNow(bool show_error=true);
+    void SetSleepTimeout(SleepTimeout timeout);
+    void ToggleNeverSleepSiteForTab(Tab& tab);
+    void AddHomeShortcutUi();
+    void PinHomeRecentSite(std::size_t index);
+    void HideHomeRecentSite(std::size_t index);
+    void RemoveHomeShortcutUi(std::size_t index);
+    std::vector<HomeRecentSite> VisibleHomeRecentSites(std::size_t maximum) const;
+    void EnsureDownloadsLoaded();
     void LoadDownloads();
     void SaveDownloads() const;
     void TrackDownload(ICoreWebView2DownloadOperation* operation);
@@ -1096,6 +1192,8 @@ private:
     void ToggleDownloadPause(std::size_t index);
     void CancelDownload(std::size_t index);
     void RetryDownload(std::size_t index);
+    void RetryFailedDownloadsNow();
+    void OpenDownloadSource(std::size_t index, bool select = true);
     void ClearDownloads();
     void DownloadQuickMenu();
     void SiteInfoMenu();
@@ -1103,24 +1201,35 @@ private:
     void RefreshSiteCookies(Tab& tab);
     void SiteCookiesMenu();
     void ClearSiteCookies();
+    void EnsureSitePermissionsLoaded();
     void SaveSitePermissionsNow();
     void SyncRuntimeSitePermission(Tab& tab, std::string_view origin, SitePermissionKind kind, SitePermissionDecision decision);
+    void EnsureInternalPageData(InternalPage page);
     void OpenInternalPage(std::wstring url);
+    void EnsureNamedSessionsLoaded();
     void SaveCurrentWorkspaceSession();
     void RestoreNamedSession(std::size_t index);
     void DeleteNamedSessionUi(std::size_t index);
     void SaveNamedSessionsNow();
     void RefreshPrivacyManager();
-    std::vector<std::string> PrivacyPermissionOrigins() const;
+    std::vector<std::string> PrivacyPermissionOrigins();
     void ClearPrivacyCookieDomain(std::size_t index);
     void ResetPrivacyPermissionOrigin(std::size_t index);
     void ClearAllSiteDataFromPrivacy();
     void EnsureExtensionProfile();
     void CaptureExtensionProfile(Tab& tab);
     void EnsureAdBlocker(std::function<void()> resume);
+    void EnsureAdBlockerPreferencesLoaded();
+    bool SaveAdBlockerSiteExceptionsNow(bool show_error=true);
+    bool PrepareAdBlockerProfileAssets(const std::filesystem::path& source, const std::filesystem::path& destination, std::wstring* error);
+    void ReloadBundledAdBlocker(bool reload_active_page);
+    void ToggleAdBlockerForTab(Tab& tab);
+    void ClearAdBlockerSiteExceptionsNow();
+    bool AdBlockerGloballyEnabled() const;
     std::filesystem::path AdBlockerDisabledPath() const;
     bool SaveAdBlockerEnabled(bool enabled);
     void RefreshExtensions();
+    void EnsureExtensionSourcesLoaded();
     void RefreshExtensionSourceHealth();
     void LoadUnpackedExtension();
     void InstallExtensionFromSource(const std::filesystem::path& folder, bool reloading = false);
@@ -1142,6 +1251,7 @@ private:
     DiagnosticsSnapshot DiagnosticsSnapshotNow() const;
     std::wstring DiagnosticsTextNow() const;
     void CopyDiagnosticsText();
+    void CopyProblemTemplateNow();
     void ExportDiagnosticsBundleNow();
     void ExportRecoveryReportNow();
     ReliabilityReportSnapshot ReliabilitySnapshotNow() const;
@@ -1163,6 +1273,8 @@ private:
     bool ScrollInternal(int delta);
     void PaintInternalPage(HDC dc, const RECT& content, Tab& tab);
     bool HitNativeAction(POINT point);
+    std::wstring NativeActionAccessibleName(const NativeAction& action) const;
+    void NotifyNativeActionFocus();
     RECT DisplayTabRect(std::size_t index) const;
     void MainMenu();
     void ProfileMenu();
@@ -1421,8 +1533,427 @@ private:
     Impl* app_ = nullptr;
 };
 
+
+class BrowserApp::Impl::NativeClientAccessible final : public IAccessible {
+public:
+    NativeClientAccessible(Impl* app, IAccessible* base) : app_(app), base_(base) {}
+    void Detach() { app_ = nullptr; }
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** object) override {
+        if (!object) return E_POINTER;
+        *object = nullptr;
+        if (iid == IID_IUnknown || iid == IID_IDispatch || iid == IID_IAccessible) {
+            *object = static_cast<IAccessible*>(this);
+            AddRef();
+            return S_OK;
+        }
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return static_cast<ULONG>(InterlockedIncrement(&refs_)); }
+    ULONG STDMETHODCALLTYPE Release() override {
+        const auto value = static_cast<ULONG>(InterlockedDecrement(&refs_));
+        if (!value) delete this;
+        return value;
+    }
+
+    HRESULT STDMETHODCALLTYPE GetTypeInfoCount(UINT* count) override {
+        if (!count) return E_POINTER;
+        *count = 0;
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE GetTypeInfo(UINT, LCID, ITypeInfo**) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE GetIDsOfNames(REFIID, LPOLESTR*, UINT, LCID, DISPID*) override { return DISP_E_UNKNOWNNAME; }
+    HRESULT STDMETHODCALLTYPE Invoke(DISPID, REFIID, LCID, WORD, DISPPARAMS*, VARIANT*, EXCEPINFO*, UINT*) override {
+        return DISP_E_MEMBERNOTFOUND;
+    }
+
+    HRESULT STDMETHODCALLTYPE get_accParent(IDispatch** parent) override {
+        if (!parent) return E_POINTER;
+        *parent = nullptr;
+        return base_ ? base_->get_accParent(parent) : S_FALSE;
+    }
+    HRESULT STDMETHODCALLTYPE get_accChildCount(long* count) override {
+        if (!count) return E_POINTER;
+        long base_count = 0;
+        if (base_) base_->get_accChildCount(&base_count);
+        *count = base_count + static_cast<long>(ActionCount());
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE get_accChild(VARIANT child, IDispatch** output) override {
+        if (!output) return E_POINTER;
+        *output = nullptr;
+        std::size_t index = 0;
+        if (ResolveAction(child, index)) return S_FALSE; // virtual MSAA child ID
+        return base_ ? base_->get_accChild(child, output) : S_FALSE;
+    }
+    HRESULT STDMETHODCALLTYPE get_accName(VARIANT child, BSTR* name) override {
+        if (!name) return E_POINTER;
+        *name = nullptr;
+        std::size_t index = 0;
+        if (ResolveAction(child, index)) return CopyText(ActionName(index), name);
+        return base_ ? base_->get_accName(child, name) : S_FALSE;
+    }
+    HRESULT STDMETHODCALLTYPE get_accValue(VARIANT child, BSTR* value) override {
+        if (!value) return E_POINTER;
+        *value = nullptr;
+        std::size_t index = 0;
+        if (ResolveAction(child, index)) return S_FALSE;
+        return base_ ? base_->get_accValue(child, value) : S_FALSE;
+    }
+    HRESULT STDMETHODCALLTYPE get_accDescription(VARIANT child, BSTR* description) override {
+        if (!description) return E_POINTER;
+        *description = nullptr;
+        std::size_t index = 0;
+        if (ResolveAction(child, index)) return CopyText(L"WebCom native page action", description);
+        return base_ ? base_->get_accDescription(child, description) : S_FALSE;
+    }
+    HRESULT STDMETHODCALLTYPE get_accRole(VARIANT child, VARIANT* role) override {
+        if (!role) return E_POINTER;
+        std::size_t index = 0;
+        if (ResolveAction(child, index)) {
+            VariantInit(role);
+            role->vt = VT_I4;
+            role->lVal = ROLE_SYSTEM_PUSHBUTTON;
+            return S_OK;
+        }
+        return base_ ? base_->get_accRole(child, role) : E_FAIL;
+    }
+    HRESULT STDMETHODCALLTYPE get_accState(VARIANT child, VARIANT* state) override {
+        if (!state) return E_POINTER;
+        std::size_t index = 0;
+        if (ResolveAction(child, index)) {
+            VariantInit(state);
+            state->vt = VT_I4;
+            LONG flags = STATE_SYSTEM_FOCUSABLE;
+            if (app_ && GetFocus() == app_->window_ && index < app_->native_actions_.size() &&
+                app_->focused_native_command_ == app_->native_actions_[index].command)
+                flags |= STATE_SYSTEM_FOCUSED;
+            state->lVal = flags;
+            return S_OK;
+        }
+        return base_ ? base_->get_accState(child, state) : E_FAIL;
+    }
+    HRESULT STDMETHODCALLTYPE get_accHelp(VARIANT child, BSTR* help) override {
+        if (!help) return E_POINTER;
+        *help = nullptr;
+        std::size_t index = 0;
+        if (ResolveAction(child, index)) return S_FALSE;
+        return base_ ? base_->get_accHelp(child, help) : S_FALSE;
+    }
+    HRESULT STDMETHODCALLTYPE get_accHelpTopic(BSTR* help_file, VARIANT child, long* topic) override {
+        if (!help_file || !topic) return E_POINTER;
+        *help_file = nullptr;
+        *topic = -1;
+        std::size_t index = 0;
+        if (ResolveAction(child, index)) return S_FALSE;
+        return base_ ? base_->get_accHelpTopic(help_file, child, topic) : S_FALSE;
+    }
+    HRESULT STDMETHODCALLTYPE get_accKeyboardShortcut(VARIANT child, BSTR* shortcut) override {
+        if (!shortcut) return E_POINTER;
+        *shortcut = nullptr;
+        std::size_t index = 0;
+        if (ResolveAction(child, index)) return S_FALSE;
+        return base_ ? base_->get_accKeyboardShortcut(child, shortcut) : S_FALSE;
+    }
+    HRESULT STDMETHODCALLTYPE get_accFocus(VARIANT* focus) override {
+        if (!focus) return E_POINTER;
+        VariantInit(focus);
+        if (app_ && GetFocus() == app_->window_ && app_->focused_native_command_) {
+            for (std::size_t i = 0; i < ActionCount(); ++i) {
+                if (app_->native_actions_[i].command == app_->focused_native_command_)
+                    return ActionVariant(i, focus);
+            }
+        }
+        return base_ ? base_->get_accFocus(focus) : S_FALSE;
+    }
+    HRESULT STDMETHODCALLTYPE get_accSelection(VARIANT* selection) override {
+        if (!selection) return E_POINTER;
+        VariantInit(selection);
+        return base_ ? base_->get_accSelection(selection) : S_FALSE;
+    }
+    HRESULT STDMETHODCALLTYPE get_accDefaultAction(VARIANT child, BSTR* action) override {
+        if (!action) return E_POINTER;
+        *action = nullptr;
+        std::size_t index = 0;
+        if (ResolveAction(child, index)) return CopyText(L"Press", action);
+        return base_ ? base_->get_accDefaultAction(child, action) : S_FALSE;
+    }
+    HRESULT STDMETHODCALLTYPE accSelect(long flags, VARIANT child) override {
+        std::size_t index = 0;
+        if (!ResolveAction(child, index)) return base_ ? base_->accSelect(flags, child) : E_INVALIDARG;
+        if (!app_ || !(flags & (SELFLAG_TAKEFOCUS | SELFLAG_TAKESELECTION))) return E_INVALIDARG;
+        app_->focused_native_command_ = app_->native_actions_[index].command;
+        SetFocus(app_->window_);
+        const RECT content = app_->ContentBounds();
+        InvalidateRect(app_->window_, &content, FALSE);
+        app_->NotifyNativeActionFocus();
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE accLocation(long* left, long* top, long* width, long* height, VARIANT child) override {
+        if (!left || !top || !width || !height) return E_POINTER;
+        std::size_t index = 0;
+        if (!ResolveAction(child, index))
+            return base_ ? base_->accLocation(left, top, width, height, child) : E_INVALIDARG;
+        if (!app_ || !app_->window_ || index >= app_->native_actions_.size()) return E_FAIL;
+        const RECT rect = app_->native_actions_[index].rect;
+        POINT origin{rect.left, rect.top};
+        ClientToScreen(app_->window_, &origin);
+        *left = origin.x;
+        *top = origin.y;
+        *width = std::max<LONG>(0, rect.right - rect.left);
+        *height = std::max<LONG>(0, rect.bottom - rect.top);
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE accNavigate(long direction, VARIANT start, VARIANT* end) override {
+        if (!end) return E_POINTER;
+        VariantInit(end);
+        std::size_t index = 0;
+        if (ResolveAction(start, index)) {
+            if (direction == NAVDIR_NEXT || direction == NAVDIR_PREVIOUS) {
+                const auto next = NativeAccessibleNextAction(index, ActionCount(), direction == NAVDIR_NEXT);
+                if (next) return ActionVariant(*next, end);
+                if (direction == NAVDIR_PREVIOUS && index == 0 && BaseCount() > 0) {
+                    end->vt = VT_I4;
+                    end->lVal = BaseCount();
+                    return S_OK;
+                }
+                return S_FALSE;
+            }
+            return S_FALSE;
+        }
+        if (IsSelf(start)) {
+            if (direction == NAVDIR_LASTCHILD && ActionCount()) return ActionVariant(ActionCount() - 1, end);
+            if (direction == NAVDIR_FIRSTCHILD && BaseCount() == 0 && ActionCount()) return ActionVariant(0, end);
+        }
+        if (start.vt == VT_I4 && start.lVal == BaseCount() && direction == NAVDIR_NEXT && ActionCount())
+            return ActionVariant(0, end);
+        return base_ ? base_->accNavigate(direction, start, end) : S_FALSE;
+    }
+    HRESULT STDMETHODCALLTYPE accHitTest(long x, long y, VARIANT* child) override {
+        if (!child) return E_POINTER;
+        VariantInit(child);
+        if (app_ && app_->window_) {
+            POINT point{x, y};
+            ScreenToClient(app_->window_, &point);
+            for (std::size_t i = ActionCount(); i > 0; --i) {
+                if (PtInRect(&app_->native_actions_[i - 1].rect, point)) return ActionVariant(i - 1, child);
+            }
+        }
+        return base_ ? base_->accHitTest(x, y, child) : S_FALSE;
+    }
+    HRESULT STDMETHODCALLTYPE accDoDefaultAction(VARIANT child) override {
+        std::size_t index = 0;
+        if (!ResolveAction(child, index)) return base_ ? base_->accDoDefaultAction(child) : E_INVALIDARG;
+        if (!app_ || index >= app_->native_actions_.size()) return E_FAIL;
+        const UINT command = app_->native_actions_[index].command;
+        if (!command) return S_FALSE;
+        app_->focused_native_command_ = command;
+        app_->Dispatch(command);
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE put_accName(VARIANT child, BSTR name) override {
+        std::size_t index = 0;
+        if (ResolveAction(child, index)) return E_NOTIMPL;
+        return base_ ? base_->put_accName(child, name) : E_NOTIMPL;
+    }
+    HRESULT STDMETHODCALLTYPE put_accValue(VARIANT child, BSTR value) override {
+        std::size_t index = 0;
+        if (ResolveAction(child, index)) return E_NOTIMPL;
+        return base_ ? base_->put_accValue(child, value) : E_NOTIMPL;
+    }
+
+private:
+    static bool IsSelf(const VARIANT& child) { return child.vt == VT_I4 && child.lVal == CHILDID_SELF; }
+    static HRESULT CopyText(std::wstring_view text, BSTR* output) {
+        *output = SysAllocStringLen(text.data(), static_cast<UINT>(text.size()));
+        return *output || text.empty() ? S_OK : E_OUTOFMEMORY;
+    }
+    long BaseCount() const {
+        long count = 0;
+        if (base_) base_->get_accChildCount(&count);
+        return std::max<long>(0, count);
+    }
+    std::size_t ActionCount() const {
+        if (!app_) return 0;
+        const auto* tab = app_->Active();
+        if (!tab || tab->web || tab->creating) return 0;
+        if (tab->private_mode && IsHome(tab->url)) return 0;
+        if (!IsHome(tab->url) && !IsInternalPage(tab->url) && !tab->failed) return 0;
+        return app_->native_actions_.size();
+    }
+    bool ResolveAction(const VARIANT& child, std::size_t& index) const {
+        if (!app_ || child.vt != VT_I4) return false;
+        const auto resolved = NativeAccessibleActionIndex(BaseCount(), child.lVal, ActionCount());
+        if (!resolved) return false;
+        index = *resolved;
+        return true;
+    }
+    HRESULT ActionVariant(std::size_t index, VARIANT* output) const {
+        if (!output || index >= ActionCount()) return E_INVALIDARG;
+        VariantInit(output);
+        const long child_id = NativeAccessibleChildId(BaseCount(), index);
+        if (!child_id) return E_INVALIDARG;
+        output->vt = VT_I4;
+        output->lVal = child_id;
+        return S_OK;
+    }
+    std::wstring ActionName(std::size_t index) const {
+        if (!app_ || index >= ActionCount()) return L"WebCom action";
+        return app_->NativeActionAccessibleName(app_->native_actions_[index]);
+    }
+
+    LONG refs_ = 1;
+    Impl* app_ = nullptr;
+    ComPtr<IAccessible> base_;
+};
+
+
+std::wstring BrowserApp::Impl::NativeActionAccessibleName(const NativeAction& action) const {
+    if (!action.name.empty()) return action.name;
+    const UINT command = action.command;
+    auto prefix = [](std::wstring_view verb, std::wstring_view value) {
+        std::wstring out(verb);
+        if (!value.empty()) { out += L" "; out += value; }
+        return out;
+    };
+    if (command >= HomeShortcutBase && command < HomeShortcutBase + home_preferences_.shortcuts.size()) {
+        const auto& item = home_preferences_.shortcuts[command - HomeShortcutBase];
+        return prefix(L"Open", Wide(item.title));
+    }
+    if (command >= HomeShortcutRemoveBase && command < HomeShortcutRemoveBase + home_preferences_.shortcuts.size()) {
+        const auto& item = home_preferences_.shortcuts[command - HomeShortcutRemoveBase];
+        return prefix(L"Remove shortcut", Wide(item.title));
+    }
+    if (command >= WorkspaceBase && command < WorkspaceBase + workspaces_.size())
+        return prefix(L"Switch to workspace", Wide(workspaces_[command - WorkspaceBase].name));
+    if (command >= BookmarkBase && command < BookmarkBase + bookmarks_.size())
+        return prefix(L"Open bookmark", Wide(bookmarks_[command - BookmarkBase].title));
+    if (command >= RemoveBookmarkBase && command < RemoveBookmarkBase + bookmarks_.size())
+        return prefix(L"Remove bookmark", Wide(bookmarks_[command - RemoveBookmarkBase].title));
+    if (command >= HistoryBase && command < HistoryBase + history_entries_.size()) {
+        const auto& item = history_entries_[command - HistoryBase];
+        return prefix(L"Open history item", item.title.empty() ? item.url : item.title);
+    }
+    if (command >= DeleteHistoryBase && command < DeleteHistoryBase + history_entries_.size()) {
+        const auto& item = history_entries_[command - DeleteHistoryBase];
+        return prefix(L"Remove history item", item.title.empty() ? item.url : item.title);
+    }
+    if (command >= ReopenClosedBase && command < ReopenClosedBase + closed_tabs_.size()) {
+        const auto& item = closed_tabs_[command - ReopenClosedBase];
+        const auto title = item.title.empty() ? Wide(item.url) : Wide(item.title);
+        return prefix(L"Restore", title);
+    }
+    if (command >= DownloadBase && command < DownloadBase + download_entries_.size()) {
+        const auto& item = *download_entries_[command - DownloadBase];
+        const auto name = item.path.empty() ? item.uri : std::filesystem::path(item.path).filename().wstring();
+        return prefix(L"Open download", name);
+    }
+    if (command >= PauseDownloadBase && command < PauseDownloadBase + download_entries_.size())
+        return L"Pause or resume download";
+    if (command >= CancelDownloadBase && command < CancelDownloadBase + download_entries_.size())
+        return L"Cancel download";
+    if (command >= RetryDownloadBase && command < RetryDownloadBase + download_entries_.size())
+        return L"Retry download";
+    if (command >= OpenDownloadSourceBase && command < OpenDownloadSourceBase + download_entries_.size())
+        return L"Open download source page";
+    if (command >= SessionBase && command < SessionBase + named_sessions_.size())
+        return prefix(L"Open saved session", Wide(named_sessions_[command - SessionBase].name));
+    if (command >= DeleteSessionBase && command < DeleteSessionBase + named_sessions_.size())
+        return prefix(L"Delete saved session", Wide(named_sessions_[command - DeleteSessionBase].name));
+    if (command >= ExtensionToggleBase && command < ExtensionToggleBase + extensions_.size())
+        return prefix(extensions_[command - ExtensionToggleBase].enabled ? L"Disable extension" : L"Enable extension", extensions_[command - ExtensionToggleBase].name);
+    if (command >= ExtensionRemoveBase && command < ExtensionRemoveBase + extensions_.size())
+        return prefix(L"Remove extension", extensions_[command - ExtensionRemoveBase].name);
+    if (command >= ExtensionDetailsBase && command < ExtensionDetailsBase + extensions_.size())
+        return prefix(L"Extension details", extensions_[command - ExtensionDetailsBase].name);
+    if (command >= PrivacyCookieBase && command < PrivacyCookieBase + privacy_cookie_domains_.size())
+        return prefix(L"Clear site data for", privacy_cookie_domains_[command - PrivacyCookieBase].domain);
+    if (command >= PrivacyPermissionBase && command < PrivacyPermissionBase + 512) {
+        const auto privacy_origins = PrivacyPermissionOrigins();
+        if (command < PrivacyPermissionBase + privacy_origins.size())
+            return prefix(L"Reset permissions for", privacy_origins[command - PrivacyPermissionBase]);
+    }
+
+    switch (command) {
+    case ClearHistory: return L"Clear history";
+    case ClearRecentlyClosed: return L"Clear recently closed";
+    case HistoryDeleteMatches: return L"Delete matching history";
+    case HistoryDeleteWeek: return L"Delete history from the last 7 days";
+    case HistoryDeleteOlderMonth: return L"Delete history older than 30 days";
+    case ClearDownloadsList: return L"Clear completed downloads from the list";
+    case RetryFailedDownloads: return L"Retry failed downloads";
+    case OpenDownloadsFolder: return L"Open Downloads folder";
+    case AddHomeShortcutCmd: return L"Add shortcut";
+    case AddWorkspace: return L"New workspace";
+    case WorkspaceMenu: return L"Manage workspaces";
+    case ClearAdBlockerSiteExceptions: return L"Clear paused ad blocker sites";
+    case PrivacyRefresh: return L"Refresh privacy data";
+    case PrivacyClearAllSiteData: return L"Clear all site data";
+    case PrivacyResetAllPermissions: return L"Reset all site permissions";
+    case ExtensionsLoadUnpacked: return L"Load unpacked extension";
+    case ExtensionsRefresh: return L"Refresh extensions";
+    case ExtensionsFilterAll: return L"Show all extensions";
+    case ExtensionsFilterEnabled: return L"Show enabled extensions";
+    case ExtensionsFilterDisabled: return L"Show disabled extensions";
+    case ExtensionsFilterAttention: return L"Show extensions needing attention";
+    case CheckForUpdates: return L"Check for updates";
+    case ToggleUpdateChecks: return L"Toggle automatic update checks";
+    case UpdateChannelMenu: return L"Choose release channel";
+    case StageAvailableUpdate: return L"Download verified update";
+    case InstallStagedUpdate: return L"Install verified update";
+    case RollbackPreviousVersion: return L"Rollback to previous version";
+    case ClearUpdateTransaction: return L"Clear staged update state";
+    case CopyDiagnostics: return L"Copy diagnostics";
+    case ExportDiagnosticsBundle: return L"Export diagnostics ZIP";
+    case ExportRecoveryReport: return L"Export recovery report";
+    case OpenDataFolder: return L"Open WebCom data folder";
+    case CopyProblemTemplate: return L"Copy report template";
+    case OpenDefaultApps: return L"Open Windows Default Apps";
+    case WelcomeStartBrowsing: return L"Start browsing";
+    case TogglePasswords: return L"Toggle password saving";
+    case ToggleAutofill: return L"Toggle form autofill";
+    case ClearSavedPasswords: return L"Clear saved passwords";
+    case ClearAutofillData: return L"Clear autofill form data";
+    case ImportBookmarks: return L"Import bookmarks";
+    case ExportBookmarks: return L"Export bookmarks";
+    case NewBookmarkFolder: return L"New bookmark folder";
+    case ReaderBackToPage: return L"Open original page";
+    case ReaderTextSmaller: return L"Decrease reader text size";
+    case ReaderTextLarger: return L"Increase reader text size";
+    case ReaderWidthCycle: return L"Change reader width";
+    case ReaderFontToggle: return L"Change reader font";
+    case ReaderCopyText: return L"Copy reader text";
+    case ReaderExportMenu: return L"Export reader content";
+    case FocusAddress: return L"Edit address";
+    case Reload: return L"Try again";
+    case NewTab: return L"New Tab";
+    default: return L"WebCom action";
+    }
+}
+
+void BrowserApp::Impl::NotifyNativeActionFocus() {
+    if (!window_ || !client_accessible_ || !focused_native_command_) return;
+    long base_count = 0;
+    IAccessible* base = nullptr;
+    if (SUCCEEDED(CreateStdAccessibleObject(window_, OBJID_CLIENT, IID_IAccessible,
+            reinterpret_cast<void**>(&base))) && base) {
+        base->get_accChildCount(&base_count);
+        base->Release();
+    }
+    for (std::size_t i = 0; i < native_actions_.size(); ++i) {
+        if (native_actions_[i].command == focused_native_command_) {
+            NotifyWinEvent(EVENT_OBJECT_FOCUS, window_, OBJID_CLIENT,
+                base_count + static_cast<LONG>(i) + 1);
+            return;
+        }
+    }
+}
+
 BrowserApp::Impl::~Impl() {
     closing_ = true;
+    if (client_accessible_impl_) client_accessible_impl_->Detach();
+    client_accessible_impl_ = nullptr;
+    client_accessible_.Reset();
     if (tab_accessible_impl_) tab_accessible_impl_->Detach();
     tab_accessible_impl_ = nullptr;
     tab_accessible_.Reset();
@@ -1492,7 +2023,7 @@ bool BrowserApp::Impl::Create(int show_command, const std::wstring& initial_addr
     ShowWindow(window_, show_command == SW_SHOWNORMAL ? SW_SHOWMAXIMIZED : show_command);
     UpdateWindow(window_);
     PrepareUpdateHealthState();
-    SetTimer(window_, kTick, 10000, nullptr);
+    RefreshPerformanceTimer();
     if (start_private) {
         const auto private_id = Add(L"webcom:newtab", true, true);
         if (auto* tab = Find(private_id); tab && tab->private_mode && IsActive(*tab)) {
@@ -1562,6 +2093,7 @@ void BrowserApp::Impl::RestoreProfile() {
     for (auto& t : tabs_) Release(*t);
     tabs_.clear();
     closed_tabs_.clear();
+    recently_closed_loaded_ = false;
     tab_groups_.clear();
     auto it = std::find_if(state_.profiles.begin(), state_.profiles.end(),
         [&](const SavedProfile& p) { return p.name == profile_name_; });
@@ -1674,11 +2206,25 @@ void BrowserApp::Impl::Dirty() {
 }
 
 void BrowserApp::Impl::Note(const std::wstring& text) {
+    toast_action_command_ = 0;
+    toast_download_id_ = 0;
     status_note_ = text;
     note_until_ = GetTickCount64() + 4500;
     if (window_ && toast_) {
         SetWindowTextW(toast_, text.c_str());
         SetTimer(window_, kToast, 4500, nullptr);
+        Layout();
+    }
+}
+
+void BrowserApp::Impl::NoteAction(const std::wstring& text, UINT command) {
+    toast_action_command_ = command;
+    if (command != OpenToastDownload) toast_download_id_ = 0;
+    status_note_ = text;
+    note_until_ = GetTickCount64() + 6500;
+    if (window_ && toast_) {
+        SetWindowTextW(toast_, text.c_str());
+        SetTimer(window_, kToast, 6500, nullptr);
         Layout();
     }
 }
@@ -1732,9 +2278,12 @@ void BrowserApp::Impl::UpdateOmniboxSuggestions() {
     omnibox_suggestions_=std::move(next);omnibox_selected_=-1;omnibox_hot_=-1;
     const int width=std::max(D(320),static_cast<int>(native_chrome_.omnibox.right-native_chrome_.omnibox.left));
     const int height=D(10)+static_cast<int>(omnibox_suggestions_.size())*D(52);
+    // Reveal the fully positioned suggestion surface without letting USER32
+    // paint an intermediate native background. The owner-drawn buffered panel
+    // is then rendered synchronously once at its final bounds.
     SetWindowPos(suggestion_panel_,HWND_TOP,native_chrome_.omnibox.left,native_chrome_.omnibox.bottom+D(4),width,height,
-        SWP_NOACTIVATE|SWP_SHOWWINDOW|SWP_NOOWNERZORDER);
-    InvalidateRect(suggestion_panel_,nullptr,FALSE);
+        SWP_NOACTIVATE|SWP_SHOWWINDOW|SWP_NOOWNERZORDER|SWP_NOREDRAW);
+    RedrawWindow(suggestion_panel_,nullptr,nullptr,RDW_INVALIDATE|RDW_NOERASE|RDW_UPDATENOW);
 }
 
 void BrowserApp::Impl::ApplyOmniboxSuggestion(std::size_t index) {
@@ -1765,12 +2314,12 @@ std::uint64_t BrowserApp::Impl::Add(std::wstring url, bool select, bool private_
     if (select) Select(tabs_.size() - 1);
     else UpdateUI();
     Dirty();
-    if(!reflow_origins.empty()){
+    if(ChromeShouldAnimateReflow(!reflow_origins.empty(),ReducedMotionActive())){
         tab_reflow_from_=std::move(reflow_origins);
         tab_reflow_start_=GetTickCount64();
         SetTimer(window_,kAnimationFrame,16,nullptr);
         if(tab_strip_)InvalidateRect(tab_strip_,nullptr,FALSE);
-    }
+    } else if(ReducedMotionActive()){tab_reflow_start_=0;tab_reflow_from_.clear();}
     return id;
 }
 
@@ -1795,6 +2344,7 @@ void BrowserApp::Impl::Select(std::size_t index) {
         private_scroll_=0;
         native_scroll_=0;
         hot_native_command_=0;
+        focused_native_command_=0;
         if(home_search_ && GetWindowTextLengthW(home_search_))SetWindowTextW(home_search_,L"");
         if(old){old->activity.active=false;old->activity.last_active_ms=GetTickCount64();}
     }
@@ -1821,8 +2371,11 @@ void BrowserApp::Impl::Select(std::size_t index) {
         if(found!=visible.end())
             NotifyWinEvent(EVENT_OBJECT_SELECTION,tab_strip_,OBJID_CLIENT,static_cast<LONG>(found-visible.begin())+1);
     }
-    tab_transition_until_=GetTickCount64()+140;
-    SetTimer(window_,kAnimationFrame,16,nullptr);
+    const auto transition_ms=ChromeTabSelectionDuration(changed,ReducedMotionActive());
+    if(transition_ms){
+        tab_transition_until_=GetTickCount64()+transition_ms;
+        SetTimer(window_,kAnimationFrame,16,nullptr);
+    } else tab_transition_until_=0;
     if(!tab.controller){
         const RECT content=ContentBounds();
         RedrawWindow(window_,&content,nullptr,RDW_INVALIDATE|RDW_NOERASE);
@@ -2028,7 +2581,7 @@ void BrowserApp::Impl::WorkspaceMenuPopup() {
     if(vertical_tabs_){anchor={D(8),ContentTop()+D(44)};ClientToScreen(window_,&anchor);}
     else {RECT more{};GetWindowRect(GetDlgItem(window_,More),&more);anchor={more.left,more.bottom};}
     UINT selected=0;
-    {menu_open_=true;struct Reset{bool& v;~Reset(){v=false;}}reset{menu_open_};selected=ShowDarkMenu(window_,anchor,items,dpi_,340,false,&palette_);}
+    {menu_open_=true;struct Reset{bool& v;~Reset(){v=false;}}reset{menu_open_};selected=ShowDarkMenu(window_,anchor,items,dpi_,340,false,&palette_,ReducedMotionActive());}
     if(!selected || closing_)return;
     if(selected>=WorkspaceBase && selected<WorkspaceBase+names.size())SwitchWorkspace(names[selected-WorkspaceBase]);
     else Dispatch(selected);
@@ -2098,11 +2651,11 @@ void BrowserApp::Impl::ToggleTabGroupState(std::wstring_view group) {
     }
     item.collapsed=collapse;
     Dirty();UpdateUI();
-    if(!reflow_origins.empty()){
+    if(ChromeShouldAnimateReflow(!reflow_origins.empty(),ReducedMotionActive())){
         tab_reflow_from_=std::move(reflow_origins);tab_reflow_start_=GetTickCount64();
         SetTimer(window_,kAnimationFrame,16,nullptr);
         if(tab_strip_)InvalidateRect(tab_strip_,nullptr,FALSE);
-    }
+    } else if(ReducedMotionActive()){tab_reflow_start_=0;tab_reflow_from_.clear();}
 }
 
 void BrowserApp::Impl::RenameGroup(std::wstring_view group) {
@@ -2148,6 +2701,39 @@ std::vector<std::size_t> BrowserApp::Impl::VisibleTabIndices() const {
     std::vector<std::size_t> result;result.reserve(relative.size());
     for(const auto index:relative)if(index<candidates.size())result.push_back(candidates[index]);
     return result;
+}
+
+void BrowserApp::Impl::CloseDuplicateTabsInWorkspace(std::uint64_t target_id) {
+    auto* target=Find(target_id);
+    if(!target)return;
+    std::vector<TabBatchItem> snapshot;
+    snapshot.reserve(tabs_.size());
+    for(auto& item:tabs_){
+        snapshot.push_back({item->id,Utf8(item->url),Utf8(item->workspace),item->private_mode,
+            IsActive(*item),item->activity.pinned,HasDownload(*item)});
+    }
+    const auto candidates=DuplicateTabCloseCandidates(snapshot,target_id,Utf8(target->workspace));
+    if(candidates.empty()){Note(L"No safe duplicate tabs to close in this workspace.");return;}
+    const auto prompt=L"Close "+std::to_wstring(candidates.size())+L" duplicate tab"+(candidates.size()==1?L"":L"s")+
+        L" in workspace ‘"+target->workspace+L"’?\n\nPinned tabs, the active tab and tabs with downloads are protected.";
+    if(MessageBoxW(window_,prompt.c_str(),L"Close duplicate tabs",MB_YESNO|MB_DEFBUTTON2|MB_ICONQUESTION)!=IDYES)return;
+    std::size_t closed=0;
+    for(const auto id:candidates){if(Find(id)){Close(id);++closed;}}
+    if(closed)Note(L"Closed "+std::to_wstring(closed)+L" duplicate tab"+(closed==1?L".":L"s."));
+}
+
+void BrowserApp::Impl::SleepOtherTabsInWorkspace(std::uint64_t keep_id) {
+    auto* keep=Find(keep_id);
+    if(!keep)return;
+    std::size_t requested=0;
+    for(auto& item:tabs_){
+        if(item->id==keep_id || _wcsicmp(item->workspace.c_str(),keep->workspace.c_str())!=0)continue;
+        const bool before=item->activity.suspended || item->activity.suspend_pending;
+        Suspend(*item,true);
+        if(!before && (item->activity.suspended || item->activity.suspend_pending))++requested;
+    }
+    if(requested)Note(L"Sleep requested for "+std::to_wstring(requested)+L" eligible tab"+(requested==1?L".":L"s."));
+    else Note(L"No other tabs in this workspace are currently eligible to sleep.");
 }
 
 void BrowserApp::Impl::AssignTabGroup(std::uint64_t id,std::wstring group) {
@@ -2257,8 +2843,12 @@ void BrowserApp::Impl::Close(std::uint64_t id) {
     const bool closed_active = IsActive(tab);
     if (closed_active && home_search_) SetWindowTextW(home_search_, L"");
     if (!tab.private_mode && !tab.ephemeral) {
-        closed_tabs_.push_front({tab.url, tab.title, tab.activity.pinned, tab.activity.protected_from_sleep});
-        if (closed_tabs_.size() > 20) closed_tabs_.pop_back();
+        EnsureRecentlyClosedLoaded();
+        const auto closed_at = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+        RecentlyClosedEntry entry{Utf8(tab.url), Utf8(tab.title), Utf8(tab.workspace), Utf8(tab.group),
+                                  tab.activity.pinned, tab.activity.protected_from_sleep, closed_at};
+        if (AddRecentlyClosed(closed_tabs_, std::move(entry))) SaveRecentlyClosedNow(false);
     }
     const auto index = static_cast<std::size_t>(std::distance(tabs_.begin(), it));
     Release(tab);
@@ -2274,27 +2864,60 @@ void BrowserApp::Impl::Close(std::uint64_t id) {
     }
     Dirty();
     UpdateUI(closed_active);
-    if(!reflow_origins.empty()){
+    if(ChromeShouldAnimateReflow(!reflow_origins.empty(),ReducedMotionActive())){
         tab_reflow_from_=std::move(reflow_origins);
         tab_reflow_start_=GetTickCount64();
         SetTimer(window_,kAnimationFrame,16,nullptr);
         if(tab_strip_)InvalidateRect(tab_strip_,nullptr,FALSE);
-    }
+    } else if(ReducedMotionActive()){tab_reflow_start_=0;tab_reflow_from_.clear();}
 }
 
-void BrowserApp::Impl::Reopen() {
-    if (closed_tabs_.empty()) { Note(L"No recently closed normal tabs in this session."); return; }
-    if (tabs_.size() >= kMaxTabs) return;
-    const auto saved = closed_tabs_.front();
-    closed_tabs_.pop_front();
-    const auto id = Add(saved.url);
-    if (auto* tab = Find(id)) {
-        tab->title = saved.title;
-        tab->activity.pinned = saved.pinned;
-        tab->activity.protected_from_sleep = saved.awake;
-    }
-    UpdateUI();
+void BrowserApp::Impl::EnsureRecentlyClosedLoaded() {
+    if (recently_closed_loaded_) return;
+    closed_tabs_ = LoadRecentlyClosed(root_, profile_name_);
+    recently_closed_loaded_ = true;
 }
+
+void BrowserApp::Impl::SaveRecentlyClosedNow(bool show_error) {
+    if (!recently_closed_loaded_) return;
+    std::string error;
+    if (!SaveRecentlyClosed(root_, profile_name_, closed_tabs_, &error) && show_error)
+        Notice(L"Recently closed tabs could not be saved. " + Wide(error));
+}
+
+void BrowserApp::Impl::ReopenClosedAt(std::size_t index) {
+    EnsureRecentlyClosedLoaded();
+    if (index >= closed_tabs_.size()) { Note(L"No recently closed normal tabs are available."); return; }
+    if (tabs_.size() >= kMaxTabs) { Note(L"Close an open tab before restoring another tab."); return; }
+    const auto saved = closed_tabs_[index];
+    const auto workspace = std::find_if(workspaces_.begin(), workspaces_.end(), [&](const SavedWorkspace& item) {
+        return _stricmp(item.name.c_str(), saved.workspace.c_str()) == 0;
+    });
+    if (workspace != workspaces_.end()) active_workspace_ = Wide(workspace->name);
+    const auto id = Add(Wide(saved.url), true, false);
+    auto* tab = Find(id);
+    if (!tab) return;
+    tab->title = Wide(saved.title);
+    tab->activity.pinned = saved.pinned;
+    tab->activity.protected_from_sleep = saved.keep_awake;
+    if (workspace != workspaces_.end()) tab->workspace = Wide(workspace->name);
+    if (!saved.group.empty()) {
+        auto group = std::find_if(tab_groups_.begin(), tab_groups_.end(), [&](const SavedTabGroup& item) {
+            return _stricmp(item.name.c_str(), saved.group.c_str()) == 0;
+        });
+        if (group == tab_groups_.end()) {
+            tab_groups_.push_back(SavedTabGroup{saved.group, 0, false});
+            group = std::prev(tab_groups_.end());
+        }
+        tab->group = Wide(group->name);
+    }
+    RecentlyClosedEntry removed;
+    if (RemoveRecentlyClosed(closed_tabs_, index, &removed)) SaveRecentlyClosedNow(false);
+    Dirty();
+    UpdateUI(true);
+}
+
+void BrowserApp::Impl::Reopen() { ReopenClosedAt(0); }
 
 void BrowserApp::Impl::Navigate(std::wstring input) {
     HideOmniboxSuggestions();
@@ -2406,7 +3029,11 @@ RECT BrowserApp::Impl::ControllerBoundsFor(const Tab& tab) const {
 }
 
 void BrowserApp::Impl::ApplyTabVisibility() {
-    for(auto& item:tabs_)SetVisible(*item,IsSplitVisible(*item));
+    // Two-phase controller handoff: reveal every destination controller before
+    // hiding the outgoing ones. A single tab-order pass could hide the old
+    // WebView first and expose the native content background for a frame.
+    for(auto& item:tabs_)if(IsSplitVisible(*item))SetVisible(*item,true);
+    for(auto& item:tabs_)if(!IsSplitVisible(*item))SetVisible(*item,false);
 }
 
 void BrowserApp::Impl::SetSplitTab(std::uint64_t id) {
@@ -2769,6 +3396,7 @@ void BrowserApp::Impl::Attach(Tab& tab) {
             if (FAILED(args->get_Uri(&uri.value))) return S_OK;
             const auto origin = SiteOrigin(Utf8(uri.str()));
             if (origin.empty()) return S_OK;
+            if (!current->private_mode) app->EnsureSitePermissionsLoaded();
             // Keep WebCom in control of supported permissions. Otherwise WebView2
             // can persist its own answer and stop raising PermissionRequested.
             ComPtr<ICoreWebView2PermissionRequestedEventArgs3> extended;
@@ -2960,6 +3588,13 @@ void BrowserApp::Impl::Suspend(Tab& tab, bool manual) {
     }
 }
 
+void BrowserApp::Impl::RefreshPerformanceTimer() {
+    if (!window_ || closing_) return;
+    KillTimer(window_, kTick);
+    const auto interval = PerformanceTickIntervalMs(sleep_timeout_);
+    if (interval) SetTimer(window_, kTick, interval, nullptr);
+}
+
 void BrowserApp::Impl::Tick() {
     if (closing_) return;
     const auto now = GetTickCount64();
@@ -2972,7 +3607,9 @@ void BrowserApp::Impl::Tick() {
         if (SUCCEEDED(tab->web.As(&media))) media->get_IsDocumentPlayingAudio(&audible);
         tab->activity.audible = audible != FALSE;
         if (downloading || audible) { tab->activity.last_active_ms = now; continue; }
-        if (ShouldSuspend(tab->activity, now, state_.memory_mode)) Suspend(*tab, false);
+        const auto automatic_sleep_host = Utf8(HistoryHost(tab->url));
+        if (ContainsNeverSleepHost(never_sleep_hosts_, automatic_sleep_host)) { tab->activity.last_active_ms = now; continue; }
+        if (ShouldSuspend(tab->activity, now, sleep_timeout_)) Suspend(*tab, false);
     }
 }
 
@@ -3029,15 +3666,178 @@ void BrowserApp::Impl::RecordHistory(const Tab& tab) {
     SaveHistory();
 }
 
+bool BrowserApp::Impl::SaveHomePreferencesNow(bool show_error) {
+    std::string error;
+    if (SaveHomePreferences(root_, profile_name_, home_preferences_, &error)) return true;
+    if (show_error) Notice(L"New Tab preferences could not be saved. " + Wide(error));
+    return false;
+}
+
+bool BrowserApp::Impl::SaveSleepTimeoutNow(bool show_error) {
+    std::string error;
+    if (SaveSleepTimeoutPreference(root_, profile_name_, sleep_timeout_, &error)) return true;
+    if (show_error) Notice(L"Performance preferences could not be saved. " + Wide(error));
+    return false;
+}
+
+bool BrowserApp::Impl::SaveNeverSleepHostsNow(bool show_error) {
+    std::string error;
+    if (SaveNeverSleepHostsPreference(root_, profile_name_, sleep_timeout_, never_sleep_hosts_, &error)) return true;
+    if (show_error) Notice(L"Never sleep site preferences could not be saved. " + Wide(error));
+    return false;
+}
+
+void BrowserApp::Impl::SetSleepTimeout(SleepTimeout timeout) {
+    const MemoryMode requested_mode = timeout == SleepTimeout::OneMinute ? MemoryMode::Saver : MemoryMode::Balanced;
+    if (sleep_timeout_ == timeout && state_.memory_mode == requested_mode) return;
+    const auto previous_timeout = sleep_timeout_;
+    const auto previous_mode = state_.memory_mode;
+    sleep_timeout_ = timeout;
+    state_.memory_mode = requested_mode;
+    if (!SaveSleepTimeoutNow(true)) {
+        sleep_timeout_ = previous_timeout;
+        state_.memory_mode = previous_mode;
+        return;
+    }
+    if (auto session = session_.lock()) session->ApplyPreferences();
+    if (timeout == SleepTimeout::Never)
+        Note(L"Automatic tab sleeping is off for this profile.");
+    else
+        Note(L"Eligible background tabs will sleep after " + std::wstring(SleepTimeoutLabel(timeout)) + L".");
+    Dirty();
+    RefreshPerformanceTimer();
+    Tick();
+    UpdateUI();
+}
+
+void BrowserApp::Impl::ToggleNeverSleepSiteForTab(Tab& tab) {
+    const auto host = NormalizeNeverSleepHost(Utf8(HistoryHost(tab.url)));
+    if (host.empty()) { Note(L"Never sleep site exceptions are available for HTTP(S) pages."); return; }
+    const auto previous = never_sleep_hosts_;
+    const auto found = std::find(never_sleep_hosts_.begin(), never_sleep_hosts_.end(), host);
+    const bool adding = found == never_sleep_hosts_.end();
+    if (adding) {
+        if (never_sleep_hosts_.size() >= kMaxNeverSleepHosts) { Notice(L"This profile already has 64 Never sleep site exceptions."); return; }
+        never_sleep_hosts_.push_back(host);
+    } else {
+        never_sleep_hosts_.erase(found);
+    }
+    if (!SaveNeverSleepHostsNow(true)) { never_sleep_hosts_ = previous; return; }
+    if (adding && tab.web) {
+        ComPtr<ICoreWebView2_3> lifecycle;
+        if (SUCCEEDED(tab.web.As(&lifecycle))) lifecycle->Resume();
+        tab.activity.suspended = false;
+        tab.activity.suspend_pending = false;
+        tab.activity.last_active_ms = GetTickCount64();
+        LowMemoryTarget(tab, false);
+    }
+    Note(adding ? L"This site will stay awake automatically in this profile." : L"This site may sleep automatically when eligible.");
+    UpdateUI();
+}
+
+std::vector<HomeRecentSite> BrowserApp::Impl::VisibleHomeRecentSites(std::size_t maximum) const {
+    auto candidates = BuildHomeRecentSites(history_entries_, 12);
+    std::erase_if(candidates, [&](const HomeRecentSite& site) {
+        return IsHomeRecentHostHidden(home_preferences_, Utf8(site.host));
+    });
+    if (candidates.size() > maximum) candidates.resize(maximum);
+    return candidates;
+}
+
+void BrowserApp::Impl::AddHomeShortcutUi() {
+    if (home_preferences_.shortcuts.size() >= kMaxHomeShortcuts) {
+        Notice(L"New Tab can keep up to eight custom shortcuts.");
+        return;
+    }
+    const auto title = AskText(window_, instance_, &palette_, L"Add New Tab shortcut", L"&Name",
+        L"Choose a short label for this shortcut.", L"", L"Next", 80);
+    if (!title) return;
+    const auto address = AskText(window_, instance_, &palette_, L"Add New Tab shortcut", L"&Website address",
+        L"Enter a website such as example.com or https://example.com/.", L"", L"Add", 2048);
+    if (!address) return;
+    const auto resolved = ResolveAddress(Utf8(*address));
+    if (!resolved.allowed || (!resolved.url.starts_with("https://") && !resolved.url.starts_with("http://"))) {
+        Notice(L"Enter a valid http:// or https:// website address.");
+        return;
+    }
+    std::wstring clean_title = *title;
+    while (!clean_title.empty() && std::iswspace(clean_title.front())) clean_title.erase(clean_title.begin());
+    while (!clean_title.empty() && std::iswspace(clean_title.back())) clean_title.pop_back();
+    if (clean_title.empty()) { Notice(L"Shortcut name cannot be empty."); return; }
+    std::string error;
+    auto next = home_preferences_;
+    if (!AddHomeShortcut(next, {Utf8(clean_title), resolved.url}, &error)) {
+        Notice(Wide(error));
+        return;
+    }
+    const auto previous = home_preferences_;
+    home_preferences_ = std::move(next);
+    if (!SaveHomePreferencesNow(true)) { home_preferences_ = previous; return; }
+    QueueUI();
+    Note(L"New Tab shortcut added.");
+}
+
+void BrowserApp::Impl::RemoveHomeShortcutUi(std::size_t index) {
+    if (index >= home_preferences_.shortcuts.size()) return;
+    const auto label = Wide(home_preferences_.shortcuts[index].title);
+    if (MessageBoxW(window_, (L"Remove the New Tab shortcut ‘" + label + L"’?
+
+This does not delete a bookmark or browsing history.").c_str(),
+                    L"Remove New Tab shortcut", MB_YESNO | MB_DEFBUTTON2 | MB_ICONQUESTION) != IDYES) return;
+    auto next = home_preferences_;
+    if (!RemoveHomeShortcut(next, index)) return;
+    const auto previous = home_preferences_;
+    home_preferences_ = std::move(next);
+    if (!SaveHomePreferencesNow(true)) { home_preferences_ = previous; return; }
+    QueueUI();
+    Note(L"New Tab shortcut removed.");
+}
+
+void BrowserApp::Impl::PinHomeRecentSite(std::size_t index) {
+    const auto recent = VisibleHomeRecentSites(6);
+    if (index >= recent.size()) return;
+    auto next = home_preferences_;
+    std::string error;
+    const auto title = Utf8(recent[index].title.empty() ? recent[index].host : recent[index].title);
+    if (!AddHomeShortcut(next, {title, Utf8(recent[index].url)}, &error)) { Notice(Wide(error)); return; }
+    ShowHomeRecentHost(next, Utf8(recent[index].host));
+    const auto previous = home_preferences_;
+    home_preferences_ = std::move(next);
+    if (!SaveHomePreferencesNow(true)) { home_preferences_ = previous; return; }
+    QueueUI();
+    Note(L"Recent site pinned to New Tab shortcuts.");
+}
+
+void BrowserApp::Impl::HideHomeRecentSite(std::size_t index) {
+    const auto recent = VisibleHomeRecentSites(6);
+    if (index >= recent.size()) return;
+    auto next = home_preferences_;
+    if (!HideHomeRecentHost(next, Utf8(recent[index].host))) return;
+    const auto previous = home_preferences_;
+    home_preferences_ = std::move(next);
+    if (!SaveHomePreferencesNow(true)) { home_preferences_ = previous; return; }
+    QueueUI();
+    Note(L"Recent site hidden from New Tab. Browsing history was not deleted.");
+}
+
 std::filesystem::path DownloadsPathFor(const std::filesystem::path& root, const std::string& profile) {
     const auto hash = static_cast<unsigned long long>(std::hash<std::string>{}(profile));
     std::ostringstream name; name << "downloads-" << std::hex << hash << ".tsv";
     return root / name.str();
 }
 
+void BrowserApp::Impl::EnsureDownloadsLoaded() {
+    if (downloads_loaded_) return;
+    LoadDownloads();
+}
+
 void BrowserApp::Impl::LoadDownloads() {
+    downloads_loaded_ = true;
     download_entries_.clear();
     std::ifstream in(DownloadsPathFor(root_, profile_name_), std::ios::binary);
+    const auto now_ms = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count());
+    bool pruned_completed = false;
     std::string line;
     while (download_entries_.size() < 200 && std::getline(in, line)) {
         std::array<std::size_t, 5> sep{};
@@ -3065,12 +3865,22 @@ void BrowserApp::Impl::LoadDownloads() {
         // A previous-run in-progress download cannot still be controlled here.
         if (item->state == COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS)
             item->state = COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED;
+        const DownloadHistoryState history_state = item->state == COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED
+            ? DownloadHistoryState::Completed
+            : item->state == COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS ? DownloadHistoryState::Active : DownloadHistoryState::Interrupted;
+        if (!KeepDownloadHistoryRecord({item->started_ms, history_state, false, !item->uri.empty()}, now_ms)) {
+            pruned_completed = true;
+            continue;
+        }
         item->id = next_download_id_++;
         download_entries_.push_back(std::move(item));
     }
+    in.close();
+    if (pruned_completed) SaveDownloads();
 }
 
 void BrowserApp::Impl::SaveDownloads() const {
+    if (!downloads_loaded_) return;
     std::error_code ec; std::filesystem::create_directories(root_, ec);
     const auto path = DownloadsPathFor(root_, profile_name_);
     const std::filesystem::path temp = path.wstring() + L".tmp";
@@ -3111,6 +3921,7 @@ void BrowserApp::Impl::RefreshDownload(DownloadEntry& entry) {
 
 void BrowserApp::Impl::TrackDownload(ICoreWebView2DownloadOperation* operation) {
     if (!operation) return;
+    EnsureDownloadsLoaded();
     auto entry = std::make_unique<DownloadEntry>();
     entry->id = next_download_id_++;
     entry->operation = operation;
@@ -3163,7 +3974,8 @@ void BrowserApp::Impl::OnDownloadChanged(std::uint64_t id, bool state_event) {
         if (item.state == COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED) {
             std::wstring name = item.path.empty() ? L"Download" : std::filesystem::path(item.path).filename().wstring();
             if (name.empty()) name = L"Download";
-            Note(name + L" finished downloading.");
+            toast_download_id_ = id;
+            NoteAction(name + L" finished downloading. Click to open.", OpenToastDownload);
         } else if (item.state == COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED && !item.paused &&
                    item.interrupt_reason != COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_USER_CANCELED) {
             Note(L"Download interrupted. Open Downloads to retry it.");
@@ -3240,15 +4052,72 @@ void BrowserApp::Impl::RetryDownload(std::size_t index) {
             }
         }
     }
+    OpenDownloadSource(index, true);
+}
+
+void BrowserApp::Impl::OpenDownloadSource(std::size_t index, bool select) {
+    if (index >= download_entries_.size()) return;
+    const auto& item = *download_entries_[index];
     if (item.uri.empty()) { Note(L"The original download address is unavailable."); return; }
     const auto resolved = ResolveAddress(Utf8(item.uri));
     const bool http_source = resolved.url.rfind("http://", 0) == 0 || resolved.url.rfind("https://", 0) == 0;
-    if (!resolved.allowed || !http_source) { Note(L"WebCom cannot safely reopen this download source."); return; }
-    Add(Wide(resolved.url), true, false);
-    Note(L"Opened the original download source in a new tab.");
+    if (!resolved.allowed || !http_source) { Note(L"WebCom cannot safely open this download source."); return; }
+    Add(Wide(resolved.url), select, false);
+    if (select) Note(L"Opened the original download source.");
+}
+
+void BrowserApp::Impl::RetryFailedDownloadsNow() {
+    EnsureDownloadsLoaded();
+    std::vector<DownloadHistoryRecord> records;
+    records.reserve(download_entries_.size());
+    for (auto& owned : download_entries_) {
+        RefreshDownload(*owned);
+        const auto state = owned->state == COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED
+            ? DownloadHistoryState::Completed
+            : owned->state == COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS ? DownloadHistoryState::Active : DownloadHistoryState::Interrupted;
+        records.push_back({owned->started_ms, state, owned->paused, !owned->uri.empty()});
+    }
+    const auto candidates = RetryFailedDownloadIndices(records, 5);
+    if (candidates.empty()) { Note(L"No failed downloads with a safe source are available to retry."); return; }
+    const auto prompt = L"Retry " + std::to_wstring(candidates.size()) + L" failed download" +
+        (candidates.size() == 1 ? L"?" : L"s?") +
+        L"
+
+WebCom will resume downloads the current browser session can resume. Otherwise it will reopen the validated HTTP(S) source page in a background tab. At most five sources are handled at once.";
+    if (MessageBoxW(window_, prompt.c_str(), L"Retry failed downloads", MB_YESNO | MB_DEFBUTTON2 | MB_ICONQUESTION) != IDYES) return;
+    std::size_t resumed = 0;
+    std::size_t reopened = 0;
+    for (const auto index : candidates) {
+        if (index >= download_entries_.size()) continue;
+        auto& item = *download_entries_[index];
+        bool handled = false;
+        if (item.operation && item.state == COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED) {
+            BOOL can_resume = FALSE;
+            if (SUCCEEDED(item.operation->get_CanResume(&can_resume)) && can_resume && SUCCEEDED(item.operation->Resume())) {
+                item.state = COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS;
+                item.interrupt_reason = COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_NONE;
+                item.paused = false;
+                if (!item.event_driven) SetTimer(window_, kDownloadTick, 1000, nullptr);
+                ++resumed;
+                handled = true;
+            }
+        }
+        if (!handled) {
+            const auto resolved = ResolveAddress(Utf8(item.uri));
+            const bool http_source = resolved.url.rfind("http://", 0) == 0 || resolved.url.rfind("https://", 0) == 0;
+            if (resolved.allowed && http_source) {
+                Add(Wide(resolved.url), false, false);
+                ++reopened;
+            }
+        }
+    }
+    SaveDownloads();
+    QueueUI();
+    Note(L"Retry requested: " + std::to_wstring(resumed) + L" resumed, " + std::to_wstring(reopened) + L" source page" + (reopened == 1 ? L" reopened." : L"s reopened."));
 }
 
 void BrowserApp::Impl::ClearDownloads() {
+    EnsureDownloadsLoaded();
     // Keep active operations visible; clearing history must not cancel downloads.
     std::erase_if(download_entries_, [](const auto& item) {
         return item->state != COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS && !item->paused;
@@ -3257,7 +4126,14 @@ void BrowserApp::Impl::ClearDownloads() {
     if (auto* tab = Active(); tab && tab->url == L"webcom:downloads") QueueUI();
 }
 
+void BrowserApp::Impl::EnsureSitePermissionsLoaded() {
+    if (site_permissions_loaded_) return;
+    site_permissions_ = LoadSitePermissions(root_, profile_name_);
+    site_permissions_loaded_ = true;
+}
+
 void BrowserApp::Impl::SaveSitePermissionsNow() {
+    EnsureSitePermissionsLoaded();
     std::string error;
     if (!SaveSitePermissions(root_, profile_name_, site_permissions_, &error))
         Note(L"Site permissions could not be saved. " + Wide(error));
@@ -3355,7 +4231,7 @@ void BrowserApp::Impl::SiteCookiesMenu() {
     {
         menu_open_=true;
         struct Reset{bool& value;~Reset(){value=false;}} reset{menu_open_};
-        selected=ShowDarkMenu(window_,{r.left,r.bottom},items,dpi_,390,false,&palette_);
+        selected=ShowDarkMenu(window_,{r.left,r.bottom},items,dpi_,390,false,&palette_,ReducedMotionActive());
     }
     if(selected==ClearSiteCookiesCmd) ClearSiteCookies();
 }
@@ -3395,6 +4271,7 @@ void BrowserApp::Impl::SiteInfoMenu() {
         return;
     }
     if (!tab || !IsWebAddress(tab->url)) { Note(L"Site controls are available for HTTP and HTTPS pages."); return; }
+    if(!tab->private_mode) EnsureSitePermissionsLoaded();
     if(!tab->cookies_loading) RefreshSiteCookies(*tab);
     const auto origin_utf8 = SiteOrigin(Utf8(tab->url));
     if (origin_utf8.empty()) return;
@@ -3414,6 +4291,15 @@ void BrowserApp::Impl::SiteInfoMenu() {
     const std::wstring cookie_detail=tab->cookies_known
         ? std::to_wstring(tab->site_cookie_count)+L" cookie"+(tab->site_cookie_count==1?L"":L"s")+L" in use"
         : tab->cookies_loading?L"Checking cookies…":L"Cookie information unavailable";
+    std::wstring blocker_host;
+    bool blocker_exception=false;
+    const bool blocker_global=!tab->private_mode && AdBlockerGloballyEnabled();
+    if(!tab->private_mode){
+        EnsureAdBlockerPreferencesLoaded();
+        const auto host=AdBlockerHostFromUrl(Utf8(tab->url));
+        blocker_host=Wide(host);
+        if(!host.empty())blocker_exception=ContainsAdBlockerSiteException(ad_blocker_site_exceptions_,host);
+    }
     constexpr std::array<SitePermissionKind,4> kinds{
         SitePermissionKind::Camera, SitePermissionKind::Microphone,
         SitePermissionKind::Geolocation, SitePermissionKind::Notifications};
@@ -3424,6 +4310,18 @@ void BrowserApp::Impl::SiteInfoMenu() {
     if (tab->certificate_details)
         items.push_back({ShowCertificateDetailsCmd,L"Certificate details",L"Subject, issuer and validity",L"\uE946"});
     items.push_back({ShowSiteCookiesCmd,L"Cookies and site data",cookie_detail,L"\uE74E",tab->cookies_known});
+    if(tab->private_mode)
+        items.push_back({0,L"Ad blocking",L"Bundled blocker is not installed in Incognito",L"\uE72E",false});
+    else if(!blocker_global)
+        items.push_back({0,L"Ad blocking",L"Off for this profile • turn it on from Extensions",L"\uE72E",false});
+    else if(blocker_host.empty())
+        items.push_back({0,L"Ad blocking",L"Site exception unavailable for this address",L"\uE72E",false});
+    else
+        items.push_back({ToggleAdBlockerSite,
+            blocker_exception?L"Resume ad blocking on this site":L"Pause ad blocking on this site",
+            blocker_exception?L"Network, cosmetic and YouTube filtering are paused for "+blocker_host:
+                              L"Adds "+blocker_host+L" to this profile's site exceptions",
+            L"\uE72E"});
     items.push_back({0,L"",L"",L"",true,false,true});
     for(std::size_t i=0;i<kinds.size();++i){
         if(tab->private_mode){
@@ -3444,7 +4342,7 @@ void BrowserApp::Impl::SiteInfoMenu() {
     {
         menu_open_=true;
         struct Reset{bool& value;~Reset(){value=false;}} reset{menu_open_};
-        selected=ShowDarkMenu(window_,{r.left,r.bottom},items,dpi_,390,false,&palette_);
+        selected=ShowDarkMenu(window_,{r.left,r.bottom},items,dpi_,390,false,&palette_,ReducedMotionActive());
     }
     if(closing_ || !IsWindow(window_) || !selected) return;
     if(selected==ShowSiteCookiesCmd){ SiteCookiesMenu(); return; }
@@ -3488,6 +4386,7 @@ void BrowserApp::Impl::ShowCertificateDetails() {
 
 void BrowserApp::Impl::DownloadQuickMenu() {
     if (menu_open_ || closing_ || !window_ || !IsWindow(window_)) return;
+    EnsureDownloadsLoaded();
     if (download_entries_.empty()) { OpenInternalPage(L"webcom:downloads"); return; }
     std::vector<MenuItem> items;
     const std::size_t count=std::min<std::size_t>(download_entries_.size(),5);
@@ -3514,7 +4413,7 @@ void BrowserApp::Impl::DownloadQuickMenu() {
     {
         menu_open_=true;
         struct Reset{bool& value;~Reset(){value=false;}} reset{menu_open_};
-        selected=ShowDarkMenu(window_,anchor,items,dpi_,390,true,&palette_);
+        selected=ShowDarkMenu(window_,anchor,items,dpi_,390,true,&palette_,ReducedMotionActive());
     }
     if(closing_ || !IsWindow(window_) || !selected) return;
     if(selected==Downloads) { OpenInternalPage(L"webcom:downloads"); return; }
@@ -3527,7 +4426,29 @@ void BrowserApp::Impl::DownloadQuickMenu() {
     }
 }
 
+void BrowserApp::Impl::EnsureNamedSessionsLoaded() {
+    if (named_sessions_loaded_) return;
+    named_sessions_ = LoadNamedSessions(root_, profile_name_);
+    named_sessions_loaded_ = true;
+}
+
+void BrowserApp::Impl::EnsureExtensionSourcesLoaded() {
+    if (extension_sources_loaded_) return;
+    extension_sources_ = LoadExtensionSources(root_, profile_name_);
+    extension_sources_loaded_ = true;
+}
+
+void BrowserApp::Impl::EnsureInternalPageData(InternalPage page) {
+    if (page == InternalPage::Downloads) EnsureDownloadsLoaded();
+    if (page == InternalPage::History) EnsureRecentlyClosedLoaded();
+    if (page == InternalPage::Sessions || page == InternalPage::Settings) EnsureNamedSessionsLoaded();
+    if (page == InternalPage::Privacy || page == InternalPage::Settings) EnsureSitePermissionsLoaded();
+    if (page == InternalPage::Privacy) EnsureAdBlockerPreferencesLoaded();
+    if (page == InternalPage::Extensions) EnsureExtensionSourcesLoaded();
+}
+
 void BrowserApp::Impl::OpenInternalPage(std::wstring url) {
+    EnsureInternalPageData(InternalPageFor(url));
     for (std::size_t i = 0; i < tabs_.size(); ++i) {
         if (!tabs_[i]->private_mode && tabs_[i]->url == url) { Select(i); return; }
     }
@@ -3535,12 +4456,14 @@ void BrowserApp::Impl::OpenInternalPage(std::wstring url) {
 }
 
 void BrowserApp::Impl::SaveNamedSessionsNow() {
+    EnsureNamedSessionsLoaded();
     std::string error;
     if (!SaveNamedSessions(root_, profile_name_, named_sessions_, &error))
         Notice(L"Saved sessions could not be written. " + Wide(error));
 }
 
 void BrowserApp::Impl::SaveCurrentWorkspaceSession() {
+    EnsureNamedSessionsLoaded();
     std::vector<NamedSessionTab> saved_tabs;
     for (const auto& tab : tabs_) {
         if (tab->private_mode || _wcsicmp(tab->workspace.c_str(), active_workspace_.c_str()) != 0 || !IsWebAddress(tab->url)) continue;
@@ -3570,6 +4493,7 @@ void BrowserApp::Impl::SaveCurrentWorkspaceSession() {
 }
 
 void BrowserApp::Impl::RestoreNamedSession(std::size_t index) {
+    EnsureNamedSessionsLoaded();
     if (index >= named_sessions_.size()) return;
     const auto session = named_sessions_[index];
     if (session.tabs.empty()) return;
@@ -3593,6 +4517,7 @@ void BrowserApp::Impl::RestoreNamedSession(std::size_t index) {
 }
 
 void BrowserApp::Impl::DeleteNamedSessionUi(std::size_t index) {
+    EnsureNamedSessionsLoaded();
     if (index >= named_sessions_.size()) return;
     const auto name = Wide(named_sessions_[index].name);
     const auto question = L"Delete the saved session ‘" + name + L"’?\n\nOpen browser tabs are not affected.";
@@ -3601,7 +4526,8 @@ void BrowserApp::Impl::DeleteNamedSessionUi(std::size_t index) {
     SaveNamedSessionsNow(); native_scroll_ = 0; QueueUI(); Note(L"Saved session deleted.");
 }
 
-std::vector<std::string> BrowserApp::Impl::PrivacyPermissionOrigins() const {
+std::vector<std::string> BrowserApp::Impl::PrivacyPermissionOrigins() {
+    EnsureSitePermissionsLoaded();
     std::vector<std::string> origins;
     for (const auto& rule : site_permissions_) {
         if (rule.origin.empty()) continue;
@@ -3613,6 +4539,7 @@ std::vector<std::string> BrowserApp::Impl::PrivacyPermissionOrigins() const {
 
 void BrowserApp::Impl::RefreshPrivacyManager() {
     if (privacy_loading_ || closing_) return;
+    EnsureSitePermissionsLoaded();
     Tab* source = nullptr;
     for (auto& tab : tabs_) if (!tab->private_mode && tab->web) { source = tab.get(); break; }
     if (!source) { privacy_loaded_ = false; privacy_cookie_domains_.clear(); QueueUI(); return; }
@@ -3813,7 +4740,7 @@ void BrowserApp::Impl::ReaderExportMenuPopup() {
     POINT anchor{std::max(D(8),static_cast<int>(client.right)/2-D(180)),fullscreen_?D(20):D(120)};
     ClientToScreen(window_,&anchor);
     menu_open_=true; struct Reset{bool& value;~Reset(){value=false;}} reset{menu_open_};
-    const UINT selected=ShowDarkMenu(window_,anchor,items,dpi_,360,false,&palette_);
+    const UINT selected=ShowDarkMenu(window_,anchor,items,dpi_,360,false,&palette_,ReducedMotionActive());
     if(selected && !closing_) Dispatch(selected);
 }
 
@@ -3852,7 +4779,7 @@ void BrowserApp::Impl::SaveReaderMarkdown() {
 
 DiagnosticsSnapshot BrowserApp::Impl::DiagnosticsSnapshotNow() const {
     DiagnosticsSnapshot snapshot;
-    snapshot.version=L"2.0.0";
+    snapshot.version=L"3.0.0";
     if(environment_){CoString runtime; if(SUCCEEDED(environment_->get_BrowserVersionString(&runtime.value)))snapshot.runtime_version=runtime.str();}
     snapshot.profile_key=Wide(profile_name_);
     snapshot.profile_label=ProfileDisplayName(profile_name_,&appearance_);
@@ -3862,8 +4789,8 @@ DiagnosticsSnapshot BrowserApp::Impl::DiagnosticsSnapshotNow() const {
     snapshot.tabs=static_cast<unsigned>(tabs_.size());
     snapshot.workspaces=static_cast<unsigned>(workspaces_.size());
     snapshot.vertical_tabs=vertical_tabs_;
-    snapshot.reduced_motion=appearance_.reduce_motion;
-    snapshot.high_contrast=appearance_.high_contrast || SystemHighContrastEnabled();
+    snapshot.reduced_motion=ReducedMotionActive();
+    snapshot.high_contrast=HighContrastActive();
     for(const auto& tab:tabs_){if(tab->web)++snapshot.web_tabs;if(tab->activity.suspended)++snapshot.sleeping_tabs;}
     return snapshot;
 }
@@ -3928,6 +4855,33 @@ void BrowserApp::Impl::CopyDiagnosticsText() {
     memcpy(data,text.c_str(),bytes);GlobalUnlock(memory);
     if(!SetClipboardData(CF_UNICODETEXT,memory)){GlobalFree(memory);Notice(L"Diagnostics could not be copied.");return;}
     Note(L"Support diagnostics copied to the clipboard.");
+}
+
+void BrowserApp::Impl::CopyProblemTemplateNow() {
+    const auto diagnostics = DiagnosticsSnapshotNow();
+    std::wstring text =
+        L"WebCom problem report\r\n"
+        L"=====================\r\n"
+        L"WebCom version: " + diagnostics.version + L"\r\n"
+        L"WebView2 Runtime: " + (diagnostics.runtime_version.empty()?L"Unavailable":diagnostics.runtime_version) + L"\r\n"
+        L"Release channel: " + diagnostics.update_channel + L"\r\n"
+        L"Profile: " + (diagnostics.profile_label.empty()?diagnostics.profile_key:diagnostics.profile_label) + L"\r\n"
+        L"Tabs / workspaces: " + std::to_wstring(diagnostics.tabs) + L" / " + std::to_wstring(diagnostics.workspaces) + L"\r\n\r\n"
+        L"What happened?\r\n\r\n"
+        L"Steps to reproduce:\r\n1. \r\n2. \r\n3. \r\n\r\n"
+        L"Expected result:\r\n\r\n"
+        L"Actual result:\r\n\r\n"
+        L"Notes:\r\n\r\n"
+        L"Privacy note: this template intentionally omits browsing URLs, page titles, cookies, passwords and form contents.\r\n";
+    if(!OpenClipboard(window_)){Notice(L"The clipboard is currently unavailable.");return;}
+    struct ClipboardCloser{~ClipboardCloser(){CloseClipboard();}} closer;
+    if(!EmptyClipboard()){Notice(L"The clipboard could not be cleared.");return;}
+    const std::size_t bytes=(text.size()+1)*sizeof(wchar_t);
+    HGLOBAL memory=GlobalAlloc(GMEM_MOVEABLE,bytes);if(!memory){Notice(L"Not enough memory to copy the report template.");return;}
+    void* data=GlobalLock(memory);if(!data){GlobalFree(memory);Notice(L"The report template could not be copied.");return;}
+    memcpy(data,text.c_str(),bytes);GlobalUnlock(memory);
+    if(!SetClipboardData(CF_UNICODETEXT,memory)){GlobalFree(memory);Notice(L"The report template could not be copied.");return;}
+    Note(L"Problem-report template copied. Paste it into your support channel and add the reproduction details.");
 }
 
 void BrowserApp::Impl::ExportDiagnosticsBundleNow() {
@@ -4036,7 +4990,7 @@ void BrowserApp::Impl::HandleUpdateCheckCompletion(UpdateCheckCompletion* raw) {
     if (completion->evaluation.status == UpdateCheckStatus::UpdateAvailable && completion->evaluation.manifest) {
         available_update_ = completion->evaluation.manifest;
         update_runtime_status_ = L"WebCom " + Wide(available_update_->version) + L" is available and its signed manifest passed the build trust policy.";
-        Note(L"WebCom " + Wide(available_update_->version) + L" is available.");
+        NoteAction(L"WebCom " + Wide(available_update_->version) + L" is available. Click to review.", UpdatesPage);
     } else {
         available_update_.reset();
         if (completion->evaluation.status == UpdateCheckStatus::NoUpdate) Note(L"WebCom is up to date on this release channel.");
@@ -4300,9 +5254,140 @@ void BrowserApp::Impl::UpdateChannelMenuPopup() {
     };
     RECT client{};GetClientRect(window_,&client);POINT anchor{client.right-D(24),fullscreen_?D(20):D(100)};ClientToScreen(window_,&anchor);
     menu_open_=true;struct Reset{bool& value;~Reset(){value=false;}}reset{menu_open_};
-    const UINT selected=ShowDarkMenu(window_,anchor,items,dpi_,390,true,&palette_);
+    const UINT selected=ShowDarkMenu(window_,anchor,items,dpi_,390,true,&palette_,ReducedMotionActive());
     if(selected==UpdateChannelStable)SetUpdateChannel(ReleaseChannel::Stable);
     else if(selected==UpdateChannelBeta)SetUpdateChannel(ReleaseChannel::Beta);
+}
+
+void BrowserApp::Impl::EnsureAdBlockerPreferencesLoaded() {
+    if (ad_blocker_preferences_loaded_) return;
+    ad_blocker_site_exceptions_ = LoadAdBlockerSiteExceptions(root_, profile_name_);
+    ad_blocker_preferences_loaded_ = true;
+}
+
+bool BrowserApp::Impl::SaveAdBlockerSiteExceptionsNow(bool show_error) {
+    std::string error;
+    if (SaveAdBlockerSiteExceptions(root_, profile_name_, ad_blocker_site_exceptions_, &error)) return true;
+    if (show_error) Notice(L"The Ad Blocker site exceptions could not be saved. " + Wide(error));
+    return false;
+}
+
+bool BrowserApp::Impl::AdBlockerGloballyEnabled() const {
+    std::error_code error;
+    const bool disabled = std::filesystem::exists(AdBlockerDisabledPath(), error);
+    return !error && !disabled;
+}
+
+bool BrowserApp::Impl::PrepareAdBlockerProfileAssets(const std::filesystem::path& source,
+                                                      const std::filesystem::path& destination,
+                                                      std::wstring* message) {
+    EnsureAdBlockerPreferencesLoaded();
+    std::error_code error;
+    std::filesystem::create_directories(destination, error);
+    if (error) { if (message) *message=L"The profile blocker directory could not be created."; return false; }
+    for (const auto* name : {L"manifest.json", L"web-ads.css", L"youtube.css", L"youtube-player.js"}) {
+        error.clear();
+        std::filesystem::copy_file(source / name, destination / name, std::filesystem::copy_options::overwrite_existing, error);
+        if (error) { if (message) *message=L"A bundled blocker asset could not be copied: "+std::wstring(name); return false; }
+    }
+    std::ifstream rules_in(source / L"network-rules.json", std::ios::binary);
+    if (!rules_in) { if (message) *message=L"The bundled blocker network-rule template is missing."; return false; }
+    const std::string rule_template((std::istreambuf_iterator<char>(rules_in)), std::istreambuf_iterator<char>());
+    const auto rendered = RenderAdBlockerNetworkRules(rule_template, ad_blocker_site_exceptions_);
+    if (!rendered) { if (message) *message=L"The bundled blocker network-rule template is invalid."; return false; }
+    const auto write_text=[&](const std::filesystem::path& path,std::string_view content)->bool{
+        const auto temporary=path.wstring()+L".tmp";
+        std::ofstream out(temporary,std::ios::binary|std::ios::trunc);
+        if(!out)return false;
+        out.write(content.data(),static_cast<std::streamsize>(content.size()));
+        out.close();
+        if(!out){std::filesystem::remove(temporary,error);return false;}
+        error.clear();std::filesystem::rename(temporary,path,error);
+        if(error){error.clear();std::filesystem::remove(path,error);error.clear();std::filesystem::rename(temporary,path,error);}
+        return !error;
+    };
+    if (!write_text(destination / L"network-rules.json", *rendered)) {
+        if (message) *message=L"The profile-specific blocker network rules could not be written.";
+        return false;
+    }
+    const auto site_config = BuildAdBlockerSiteConfigScript(ad_blocker_site_exceptions_);
+    if (!write_text(destination / L"site-config.js", site_config)) {
+        if (message) *message=L"The profile-specific blocker site configuration could not be written.";
+        return false;
+    }
+    return true;
+}
+
+void BrowserApp::Impl::ReloadBundledAdBlocker(bool reload_active_page) {
+    ++ad_blocker_generation_;
+    ad_blocker_ready_=false;
+    ad_blocker_starting_=false;
+    const auto weak=weak_from_this();
+    const auto active_id=reload_active_page && Active()?Active()->id:0;
+    const auto restart=[weak,active_id]() {
+        auto app=weak.lock();
+        if(!app || app->closing_)return;
+        app->ad_blocker_extension_.Reset();
+        app->ad_blocker_id_.clear();
+        app->EnsureAdBlocker([weak,active_id]() {
+            auto current_app=weak.lock();
+            if(!current_app || current_app->closing_)return;
+            current_app->RefreshExtensions();
+            if(active_id){
+                if(auto* tab=current_app->Find(active_id);tab && tab->web)tab->web->Reload();
+            }
+            current_app->Note(L"Ad Blocker site settings applied.");
+        });
+    };
+    if(!ad_blocker_extension_){restart();return;}
+    auto extension=ad_blocker_extension_;
+    const HRESULT hr=extension->Remove(MakeCallback<ICoreWebView2BrowserExtensionRemoveCompletedHandler>(
+        [weak,restart](HRESULT result)->HRESULT{
+            auto app=weak.lock();
+            if(!app || app->closing_)return S_OK;
+            if(FAILED(result)){
+                app->ad_blocker_ready_=true;
+                app->Notice(L"The Ad Blocker site setting was saved, but the extension could not be reloaded. Restart WebCom to apply it.");
+                return S_OK;
+            }
+            restart();
+            return S_OK;
+        }).Get());
+    if(FAILED(hr)){
+        ad_blocker_ready_=true;
+        Notice(L"The Ad Blocker site setting was saved, but the extension reload could not start. Restart WebCom to apply it.");
+    }
+}
+
+void BrowserApp::Impl::ToggleAdBlockerForTab(Tab& tab) {
+    if(tab.private_mode){Note(L"The bundled Ad Blocker is not installed in Incognito tabs.");return;}
+    if(ad_blocker_starting_){Note(L"Ad Blocker is still initializing. Try the site control again in a moment.");return;}
+    const auto host=AdBlockerHostFromUrl(Utf8(tab.url));
+    if(host.empty()){Note(L"Ad Blocker site controls are available for HTTP(S) pages with DNS host names.");return;}
+    if(!AdBlockerGloballyEnabled()){Note(L"Ad blocking is turned off for this profile. Turn it on from Extensions first.");return;}
+    EnsureAdBlockerPreferencesLoaded();
+    const auto previous=ad_blocker_site_exceptions_;
+    const auto found=std::find(ad_blocker_site_exceptions_.begin(),ad_blocker_site_exceptions_.end(),host);
+    const bool pausing=found==ad_blocker_site_exceptions_.end();
+    if(pausing){
+        if(ad_blocker_site_exceptions_.size()>=kMaxAdBlockerSiteExceptions){Notice(L"This profile already has 64 Ad Blocker site exceptions.");return;}
+        ad_blocker_site_exceptions_.push_back(host);
+    }else ad_blocker_site_exceptions_.erase(found);
+    if(!SaveAdBlockerSiteExceptionsNow(true)){ad_blocker_site_exceptions_=previous;return;}
+    Note((pausing?L"Pausing ad blocking for ":L"Resuming ad blocking for ")+Wide(host)+L"...");
+    ReloadBundledAdBlocker(true);
+}
+
+void BrowserApp::Impl::ClearAdBlockerSiteExceptionsNow() {
+    EnsureAdBlockerPreferencesLoaded();
+    if(ad_blocker_site_exceptions_.empty()){Note(L"No Ad Blocker site exceptions are saved for this profile.");return;}
+    const auto prompt=L"Clear all "+std::to_wstring(ad_blocker_site_exceptions_.size())+L" Ad Blocker site exception"+
+        (ad_blocker_site_exceptions_.size()==1?L"?":L"s?")+L"\n\nAd blocking will resume on those sites after the bundled blocker reloads.";
+    if(MessageBoxW(window_,prompt.c_str(),L"Ad Blocker site exceptions",MB_YESNO|MB_DEFBUTTON2|MB_ICONQUESTION)!=IDYES)return;
+    const auto previous=ad_blocker_site_exceptions_;
+    ad_blocker_site_exceptions_.clear();
+    if(!SaveAdBlockerSiteExceptionsNow(true)){ad_blocker_site_exceptions_=previous;return;}
+    ReloadBundledAdBlocker(true);
 }
 
 std::filesystem::path BrowserApp::Impl::AdBlockerDisabledPath() const {
@@ -4350,14 +5435,13 @@ void BrowserApp::Impl::EnsureAdBlocker(std::function<void()> resume) {
     if (!length || length >= std::size(executable)) { finish(E_FAIL); return; }
     const auto source = std::filesystem::path(executable).parent_path() / L"extensions" / L"webcom-ad-blocker";
     const auto destination = AdBlockerDisabledPath().parent_path() / L"webcom-ad-blocker";
-    std::error_code error;
-    std::filesystem::create_directories(destination, error);
-    if (error) { finish(E_ACCESSDENIED); return; }
-    // Finish copying every asset before registering the extension or navigating.
-    for (const auto* name : {L"manifest.json", L"network-rules.json", L"web-ads.css", L"youtube.css", L"youtube-player.js"}) {
-        std::filesystem::copy_file(source / name, destination / name, std::filesystem::copy_options::overwrite_existing, error);
-        if (error) { finish(E_FAIL); return; }
+    std::wstring asset_error;
+    if (!PrepareAdBlockerProfileAssets(source, destination, &asset_error)) {
+        Notice(L"Ad blocking could not prepare its profile-specific rules. " + asset_error);
+        finish(E_FAIL);
+        return;
     }
+    std::error_code error;
     const bool disabled = std::filesystem::exists(AdBlockerDisabledPath(), error);
     if (error) { finish(E_ACCESSDENIED); return; }
     const HRESULT result = profile->AddBrowserExtension(destination.c_str(),
@@ -4369,6 +5453,7 @@ void BrowserApp::Impl::EnsureAdBlocker(std::function<void()> resume) {
                 CoString id;
                 extension->get_Id(&id.value);
                 app->ad_blocker_id_ = id.str();
+                app->ad_blocker_extension_ = extension;
                 const HRESULT result = extension->Enable(disabled ? FALSE : TRUE,
                     MakeCallback<ICoreWebView2BrowserExtensionEnableCompletedHandler>(
                         [finish](HRESULT error) -> HRESULT { finish(error); return S_OK; }).Get());
@@ -4421,6 +5506,7 @@ void BrowserApp::Impl::EnsureExtensionProfile() {
 }
 
 void BrowserApp::Impl::RefreshExtensionSourceHealth() {
+    EnsureExtensionSourcesLoaded();
     extension_source_health_.clear();
     extension_source_health_.reserve(extension_sources_.size());
     for (const auto& source : extension_sources_) {
@@ -4435,6 +5521,7 @@ void BrowserApp::Impl::RefreshExtensionSourceHealth() {
 
 void BrowserApp::Impl::RefreshExtensions() {
     if (closing_) return;
+    EnsureAdBlockerPreferencesLoaded();
     RefreshExtensionSourceHealth();
     if (!extension_profile_) { EnsureExtensionProfile(); return; }
     ComPtr<ICoreWebView2Profile7> profile7;
@@ -4474,6 +5561,7 @@ void BrowserApp::Impl::RefreshExtensions() {
                     extension->get_Name(&name.value);
                     extension->get_IsEnabled(&enabled);
                     app->extensions_.push_back({id.str(), name.str().empty()?L"Unnamed extension":name.str(), enabled != FALSE, extension});
+                    if(!app->ad_blocker_id_.empty() && id.str()==app->ad_blocker_id_)app->ad_blocker_extension_=extension;
                 }
                 app->extensions_status_ = count > shown ?
                     L"Showing the first 100 installed extensions." :
@@ -4490,6 +5578,7 @@ void BrowserApp::Impl::RefreshExtensions() {
 }
 
 bool BrowserApp::Impl::SaveExtensionSourcesNow() {
+    EnsureExtensionSourcesLoaded();
     RefreshExtensionSourceHealth();
     std::string error;
     if (SaveExtensionSources(root_, profile_name_, extension_sources_, &error)) return true;
@@ -4500,6 +5589,7 @@ bool BrowserApp::Impl::SaveExtensionSourcesNow() {
 
 void BrowserApp::Impl::InstallExtensionFromSource(const std::filesystem::path& folder, bool reloading) {
     if (closing_ || !extension_profile_) return;
+    EnsureExtensionSourcesLoaded();
     const auto info = InspectExtensionFolder(folder);
     if (!info.valid) {
         extensions_status_ = L"The unpacked source cannot be loaded. " + Wide(info.error);
@@ -4623,10 +5713,27 @@ void BrowserApp::Impl::ShowExtensionDetails(std::size_t index) {
     std::wstring body = extension.name + L"\n\nID: " + extension.id +
         L"\nState: " + (extension.enabled?L"Enabled":L"Disabled");
     const auto id = Utf8(extension.id);
+    if(extension.id==ad_blocker_id_){
+        EnsureAdBlockerPreferencesLoaded();
+        body += L"\n\nBuilt-in blocker health";
+        body += L"\nProfile state: " + std::wstring(AdBlockerGloballyEnabled()?L"On":L"Off");
+        body += L"\nSite exceptions: " + std::to_wstring(ad_blocker_site_exceptions_.size()) + L" / " + std::to_wstring(kMaxAdBlockerSiteExceptions);
+        body += L"\nNetwork rules: profile-specific DNR exclusions generated before extension load";
+        body += L"\nCosmetic / YouTube helpers: bypass the same saved site exceptions";
+        body += L"\nIncognito: bundled blocker not installed in the separate private profile";
+        if(!ad_blocker_site_exceptions_.empty()){
+            body += L"\n\nPaused sites:";
+            const auto shown=std::min<std::size_t>(ad_blocker_site_exceptions_.size(),12);
+            for(std::size_t i=0;i<shown;++i)body += L"\n • " + Wide(ad_blocker_site_exceptions_[i]);
+            if(ad_blocker_site_exceptions_.size()>shown)body += L"\n • …and " + std::to_wstring(ad_blocker_site_exceptions_.size()-shown) + L" more";
+        }
+    }
     std::size_t source_index = extension_sources_.size();
     for (std::size_t i = 0; i < extension_sources_.size(); ++i)
         if (extension_sources_[i].extension_id == id) { source_index = i; break; }
-    if (source_index >= extension_sources_.size()) {
+    if (extension.id == ad_blocker_id_) {
+        body += L"\n\nSource: bundled with WebCom and copied into the profile's writable extension directory before registration.";
+    } else if (source_index >= extension_sources_.size()) {
         body += L"\n\nUnpacked source: not recorded by WebCom. This can happen for extensions installed outside WebCom source tracking or by the underlying profile directly.";
     } else {
         const auto& source = extension_sources_[source_index];
@@ -4762,14 +5869,14 @@ void BrowserApp::Impl::HistoryMenu() {
     items.push_back({ClearHistory,L"Clear browsing history",L"",L"\uE74D",!history_entries_.empty()});
     RECT client{};GetClientRect(window_,&client);POINT anchor{client.right,fullscreen_?D(8):D(80)};ClientToScreen(window_,&anchor);
     menu_open_=true; struct Reset{bool& v;~Reset(){v=false;}} reset{menu_open_};
-    const UINT selected=ShowDarkMenu(window_,anchor,items,dpi_,390,true,&palette_);
+    const UINT selected=ShowDarkMenu(window_,anchor,items,dpi_,390,true,&palette_,ReducedMotionActive());
     if(!selected || closing_) return;
     if(selected>=HistoryBase && selected<HistoryBase+count) Navigate(history_entries_[selected-HistoryBase].url);
     else if(selected==ClearHistory){ history_entries_.clear(); SaveHistory(); Note(L"Browsing history cleared."); }
 }
 
 // Replacement definitions for app.cpp. MenuItem/ShowDarkMenu come from dark_menu.h.
-// Dispatch routes PasswordMenu/HelpMenu to PreferencesMenu; SettingsMenu opens the native settings page.
+// Dispatch routes PasswordMenu to its native manager page; Help/Performance retain compact preference menus.
 // BookmarkMenu to BookmarksMenu, and implement Zoom*, PrintPage, DeveloperTools,
 // and PrivateHelp. tab_rects_ uses absolute tab indices; invisible entries are zero.
 
@@ -4802,7 +5909,7 @@ void BrowserApp::Impl::MainMenu() {
             {OpenFile, L"Open file...", L"Ctrl+O", L"\uE8E5"},
             {NewProfileWindow, L"Open profile window...", L"Ctrl+N", L"\uE77B"},
             {PrivateTab, L"New Incognito tab", L"Ctrl+Shift+N", L"incognito"},
-            {ReopenTab, L"Reopen closed tab", L"Ctrl+Shift+T", L"\uE777", !closed_tabs_.empty()},
+            {ReopenTab, L"Reopen closed tab", L"Ctrl+Shift+T", L"\uE777", true},
             divider,
             {ProfilesMenu, private_mode ? L"Incognito" : ProfileDisplayName(profile_name_,&appearance_), L"\u203A",
                 private_mode ? L"incognito" : L"\uE77B", true, false, false, true},
@@ -4840,7 +5947,7 @@ void BrowserApp::Impl::MainMenu() {
         {
             menu_open_ = true;
             struct Reset { bool& value; ~Reset() { value = false; } } reset{menu_open_};
-            selected = ShowDarkMenu(owner, anchor, items, dpi_, 334, true, &palette_);
+            selected = ShowDarkMenu(owner, anchor, items, dpi_, 334, true, &palette_,ReducedMotionActive());
         }
         if (closing_ || window_ != owner || !IsWindow(owner) || !selected) return;
         Dispatch(selected);
@@ -4894,7 +6001,7 @@ void BrowserApp::Impl::ProfileMenu() {
     {
         menu_open_ = true;
         struct Reset { bool& value; ~Reset() { value = false; } } reset{menu_open_};
-        selected = ShowDarkMenu(owner, anchor, items, dpi_, 334, true, &palette_);
+        selected = ShowDarkMenu(owner, anchor, items, dpi_, 334, true, &palette_,ReducedMotionActive());
     }
     if (!closing_ && window_ == owner && IsWindow(owner) && selected) Dispatch(selected);
 }
@@ -4926,16 +6033,21 @@ void BrowserApp::Impl::TabMenu(POINT point) {
     const bool can_sleep = background_page && !tab.activity.pinned &&
         !tab.activity.protected_from_sleep && !tab.activity.audible &&
         !tab.activity.suspended && !tab.activity.suspend_pending;
+    const auto tab_sleep_host = Utf8(HistoryHost(tab.url));
+    const bool site_never_sleeps = ContainsNeverSleepHost(never_sleep_hosts_, tab_sleep_host);
     const MenuItem divider{0, L"", L"", L"", false, false, true};
     std::vector<MenuItem> items{
         {NewTab, L"New tab", L"Ctrl+T", L"\uE710"},
         {TabList, L"Search tabs...", L"Ctrl+Shift+A", L"\uE721"},
         {DuplicateTab, L"Duplicate tab", L"", L"\uE8C8"},
+        {CloseDuplicateTabs, L"Close duplicate tabs", L"Workspace only", L"\uE711"},
+        {SleepOtherTabs, L"Sleep other tabs", L"Workspace only", L"\uE708"},
         {MuteTab, tab.muted ? L"Unmute tab" : L"Mute tab", L"", L"\uE767", !IsHome(tab.url), tab.muted},
         {MoveTabLeft, L"Move tab left", L"Ctrl+Shift+PgUp", L"\uE72B", target > 0},
         {MoveTabRight, L"Move tab right", L"Ctrl+Shift+PgDn", L"\uE72A", target+1 < tabs_.size()},
         {PinTab, L"Pin tab", L"", L"\uE718", true, tab.activity.pinned},
-        {KeepAwake, L"Keep this tab awake", L"", L"\uE945", true, tab.activity.protected_from_sleep}
+        {KeepAwake, L"Keep this tab awake", L"", L"\uE945", true, tab.activity.protected_from_sleep},
+        {ToggleNeverSleepSite, site_never_sleeps ? L"Allow this site to sleep" : L"Never sleep this site", tab_sleep_host.empty() ? L"HTTP(S) pages only" : Wide(tab_sleep_host), L"\uE945", !tab_sleep_host.empty(), site_never_sleeps}
     };
     const auto groups=TabGroups();
     items.push_back(divider);
@@ -4972,12 +6084,12 @@ void BrowserApp::Impl::TabMenu(POINT point) {
     items.push_back({DiscardTab, L"Unload tab...", L"", L"\uE74D", background_page});
     items.push_back(divider);
     items.push_back({CloseCurrent, L"Close tab", L"Ctrl+W", L"\uE711"});
-    items.push_back({ReopenTab, L"Reopen closed tab", L"Ctrl+Shift+T", L"\uE777", !closed_tabs_.empty()});
+    items.push_back({ReopenTab, L"Reopen closed tab", L"Ctrl+Shift+T", L"\uE777", true});
     UINT selected = 0;
     {
         menu_open_ = true;
         struct Reset { bool& value; ~Reset() { value = false; } } reset{menu_open_};
-        selected = ShowDarkMenu(owner, point, items, dpi_, 330, false, &palette_);
+        selected = ShowDarkMenu(owner, point, items, dpi_, 330, false, &palette_,ReducedMotionActive());
     }
     if (closing_ || window_ != owner || !IsWindow(owner) || !selected || !Find(target_id)) return;
     menu_tab_id_ = target_id;
@@ -5014,11 +6126,24 @@ void BrowserApp::Impl::PreferencesMenu(UINT section) {
             divider,
             {ProfileManager, L"Manage profiles", L"\u203A", L"\uE77B"}
         };
+    } else if (section == PerformanceMenu) {
+        items = {
+            {SleepAfter1m, L"Sleep tabs after 1 minute", L"Memory Saver", L"\uE945", true, sleep_timeout_ == SleepTimeout::OneMinute},
+            {SleepAfter5m, L"Sleep tabs after 5 minutes", L"Balanced default", L"\uE945", true, sleep_timeout_ == SleepTimeout::FiveMinutes},
+            {SleepAfter15m, L"Sleep tabs after 15 minutes", L"", L"\uE945", true, sleep_timeout_ == SleepTimeout::FifteenMinutes},
+            {SleepAfter30m, L"Sleep tabs after 30 minutes", L"", L"\uE945", true, sleep_timeout_ == SleepTimeout::ThirtyMinutes},
+            {SleepNever, L"Never sleep tabs automatically", L"Manual sleep still works", L"\uE708", true, sleep_timeout_ == SleepTimeout::Never},
+            {ClearNeverSleepSites, L"Clear Never sleep sites", std::to_wstring(never_sleep_hosts_.size()) + L" saved site exception" + (never_sleep_hosts_.size() == 1 ? L"" : L"s"), L"\uE74D", !never_sleep_hosts_.empty()},
+            divider,
+            {SuspendNow, L"Sleep eligible background tabs now", L"Keeps active, audible, pinned, downloading and keep-awake tabs awake", L"\uE708"},
+            {MemoryReport, L"Memory usage...", L"Shift+Esc", L"\uE9D9"}
+        };
     } else if (section == HelpMenu) {
         items = {
             {WelcomePage, L"Getting started", L"", L""},
             {ShortcutsPage, L"Keyboard shortcuts", L"", L""},
             {DiagnosticsPage, L"Support diagnostics", L"", L"\uE946"},
+            {FeedbackPage, L"Report a problem", L"Privacy-safe handoff", L"\uE8A5"},
             {RecoveryPage, L"Recovery & reliability", L"", L"\uE72E"},
             {UpdateChannelMenu, L"Release channel", Wide(ReleaseChannelName(update_settings_.channel)), L"\uE81C"},
             {About, L"About WebCom", L"", L"\uE946"},
@@ -5031,9 +6156,7 @@ void BrowserApp::Impl::PreferencesMenu(UINT section) {
             {AppearanceMenu,L"Appearance",L"\u203A",L"\uE790"},
             {ToggleBookmarks,L"Show bookmarks bar",L"Ctrl+Shift+B",L"\uE734",true,show_bookmarks_},
             divider,
-            {ToggleSaver, L"Memory Saver", L"", L"\uE945", true, state_.memory_mode == MemoryMode::Saver},
-            {SuspendNow, L"Sleep background tabs now", L"", L"\uE708"},
-            {MemoryReport, L"Memory usage...", L"Shift+Esc", L"\uE9D9"},
+            {PerformanceMenu, L"Performance", SleepTimeoutSettingsDetail(sleep_timeout_), L"\uE945"},
             divider,
             {StartupMenu, L"On startup", L"\u203A", L"\uE81C"},
             {PasswordMenu, L"Passwords and autofill", L"\u203A", L"\uE72E"},
@@ -5044,6 +6167,7 @@ void BrowserApp::Impl::PreferencesMenu(UINT section) {
             divider,
             {UpdateChannelMenu, L"Release channel", Wide(ReleaseChannelName(update_settings_.channel)), L"\uE81C"},
             {DiagnosticsPage, L"Support diagnostics", L"", L"\uE946"},
+            {FeedbackPage, L"Report a problem", L"Privacy-safe handoff", L"\uE8A5"},
             {RecoveryPage, L"Recovery & reliability", L"", L"\uE72E"},
             {InstallRuntime, L"Get or update WebView2 Runtime", L"", L"\uE895"},
             {About, L"About WebCom", L"", L"\uE946"}
@@ -5056,7 +6180,7 @@ void BrowserApp::Impl::PreferencesMenu(UINT section) {
     {
         menu_open_ = true;
         struct Reset { bool& value; ~Reset() { value = false; } } reset{menu_open_};
-        selected = ShowDarkMenu(owner, anchor, items, dpi_, 334, true, &palette_);
+        selected = ShowDarkMenu(owner, anchor, items, dpi_, 334, true, &palette_,ReducedMotionActive());
     }
     if (!closing_ && window_ == owner && IsWindow(owner) && selected) Dispatch(selected);
 }
@@ -5088,7 +6212,7 @@ void BrowserApp::Impl::StartupMenuPopup() {
     UINT selected=0;
     {
         menu_open_=true;struct Reset{bool& value;~Reset(){value=false;}} reset{menu_open_};
-        selected=ShowDarkMenu(window_,anchor,items,dpi_,420,false,&palette_);
+        selected=ShowDarkMenu(window_,anchor,items,dpi_,420,false,&palette_,ReducedMotionActive());
     }
     if (!selected || closing_) return;
     profile=CurrentSavedProfile(); if(!profile)return;
@@ -5129,8 +6253,17 @@ void BrowserApp::Impl::CycleChromeFocus(bool reverse) {
     const HWND focused=GetFocus();
     auto focus_page=[&](){
         if(auto* tab=Active()){
-            if(tab->web && tab->controller){tab->controller->MoveFocus(reverse?COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS:COREWEBVIEW2_MOVE_FOCUS_REASON_NEXT);return;}
+            if(tab->web && tab->controller){focused_native_command_=0;tab->controller->MoveFocus(reverse?COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS:COREWEBVIEW2_MOVE_FOCUS_REASON_NEXT);return;}
+            const auto page=InternalPageFor(tab->url);
+            if(page!=InternalPage::None && page!=InternalPage::NewTab && !native_actions_.empty()){
+                focused_native_command_=(reverse?native_actions_.back():native_actions_.front()).command;
+                SetFocus(window_);
+                const RECT content=ContentBounds();InvalidateRect(window_,&content,FALSE);
+                NotifyNativeActionFocus();
+                return;
+            }
         }
+        focused_native_command_=0;
         if(tab_strip_)SetFocus(tab_strip_);
     };
     if (focused==address_) {
@@ -5180,7 +6313,7 @@ void BrowserApp::Impl::CreateProfile() {
     UINT color_selected=0;
     {
         menu_open_=true;struct Reset{bool& value;~Reset(){value=false;}} reset{menu_open_};
-        color_selected=ShowDarkMenu(window_,anchor,color_items,dpi_,380,false,&palette_);
+        color_selected=ShowDarkMenu(window_,anchor,color_items,dpi_,380,false,&palette_,ReducedMotionActive());
     }
     if(color_selected>=2 && color_selected<2+kProfileColors.size()){
         Appearance created=LoadAppearance(root_,new_profile_name);
@@ -5351,31 +6484,38 @@ void BrowserApp::Impl::ReportMemory() {
             }
         }
     }
-    std::uint64_t working = 0, committed = 0;
-    unsigned measured = 0;
+    MemorySnapshot snapshot;
+    snapshot.expected_processes = static_cast<unsigned>(pids.size());
+    snapshot.runtime_process_list_available = runtime_list_available;
+    const DWORD host_pid = GetCurrentProcessId();
     for (DWORD pid : pids) {
         HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
         if (!process) continue;
         PROCESS_MEMORY_COUNTERS_EX info{};
         info.cb = sizeof(info);
         if (GetProcessMemoryInfo(process, reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&info), sizeof(info))) {
-            working += info.WorkingSetSize; committed += info.PrivateUsage; ++measured;
+            ++snapshot.measured_processes;
+            if (pid == host_pid) {
+                snapshot.host_working_set += info.WorkingSetSize;
+                snapshot.host_private_commit += info.PrivateUsage;
+            } else {
+                snapshot.webview_working_set += info.WorkingSetSize;
+                snapshot.webview_private_commit += info.PrivateUsage;
+                ++snapshot.webview_processes;
+            }
         }
         CloseHandle(process);
     }
-    std::wostringstream body;
-    body << std::fixed << std::setprecision(1)
-         << L"WebCom memory snapshot\n\n"
-         << L"Working set: " << static_cast<double>(working) / 1048576.0 << L" MiB\n"
-         << L"Private committed: " << static_cast<double>(committed) / 1048576.0 << L" MiB\n"
-         << L"Processes measured: " << measured << L" of " << pids.size() << L"\n\n";
-    if (!runtime_list_available)
-        body << L"PARTIAL RESULT: the runtime process list was unavailable. Do not treat the host-only values as the browser total.\n\n";
-    if (measured != pids.size()) body << L"Some processes exited or could not be read. This snapshot is incomplete.\n\n";
-    body << L"Includes WebCom.exe and the WebView2 process group for this app, except the crash reporter.\n\n"
-         << L"Working set is resident memory and may count shared pages more than once. Private committed includes memory that may be paged out; it is not physical RAM usage.\n\n"
-         << L"Compare the same sites and tab states in Chrome. No percentage saving has been established.";
-    MessageBoxW(window_, body.str().c_str(), L"WebCom - Memory usage", MB_OK | MB_ICONINFORMATION);
+    snapshot.tabs = static_cast<unsigned>(tabs_.size());
+    snapshot.workspaces = static_cast<unsigned>(workspaces_.size());
+    for (const auto& tab : tabs_) {
+        if (tab->web) ++snapshot.web_tabs;
+        if (tab->activity.suspended) ++snapshot.sleeping_tabs;
+    }
+    snapshot.sleep_policy = SleepTimeoutLabel(sleep_timeout_);
+    snapshot.never_sleep_sites = static_cast<unsigned>(never_sleep_hosts_.size());
+    const auto body = BuildMemorySnapshotText(snapshot);
+    MessageBoxW(window_, body.c_str(), L"WebCom - Performance snapshot", MB_OK | MB_ICONINFORMATION);
 }
 
 void BrowserApp::Impl::ClearProfileDataKind(COREWEBVIEW2_BROWSING_DATA_KINDS kind,
@@ -5428,7 +6568,7 @@ void BrowserApp::Impl::ClearBrowsingData() {
         Notice(L"Update the WebView2 Runtime to clear profile data from this menu."); return;
     }
     const auto question = L"Clear all browsing data for profile \"" + ProfileDisplayName(profile_name_,&appearance_) +
-        L"\"?\n\nCookies, cached pages, site storage and saved passwords will be removed. Websites may sign you out. Downloaded files remain. This cannot be undone.";
+        L"\"?\n\nCookies, cached pages, site storage, saved passwords, WebCom history, recently closed recovery and site permissions will be removed. Downloaded files and bookmarks remain. Websites may sign you out. This cannot be undone.";
     if (MessageBoxW(window_, question.c_str(), L"Clear profile data",
         MB_YESNO | MB_DEFBUTTON2 | MB_ICONWARNING) != IDYES || closing_) return;
     const auto weak = weak_from_this();
@@ -5436,9 +6576,17 @@ void BrowserApp::Impl::ClearBrowsingData() {
         [weak](HRESULT error) -> HRESULT {
             if (auto app = weak.lock(); app && !app->closing_) {
                 if (SUCCEEDED(error)) {
+                    app->EnsureSitePermissionsLoaded();
                     app->site_permissions_.clear();
                     app->SaveSitePermissionsNow();
-                    app->Notice(L"Profile browsing data and site permissions were cleared. Reload open pages when you are ready.");
+                    app->history_entries_.clear();
+                    app->SaveHistory();
+                    app->EnsureRecentlyClosedLoaded();
+                    app->closed_tabs_.clear();
+                    app->SaveRecentlyClosedNow(false);
+                    app->native_scroll_=0;
+                    app->QueueUI();
+                    app->Notice(L"Profile browsing data, WebCom history, recently closed recovery and site permissions were cleared. Reload open pages when you are ready.");
                 } else app->Notice(L"Some browsing data could not be cleared. Close busy pages and try again.");
             }
             return S_OK;
@@ -5488,6 +6636,53 @@ void BrowserApp::Impl::Dispatch(UINT command, LPARAM extra) {
         }
         return;
     }
+    if(command>=HomeShortcutBase && command<HomeShortcutBase+kMaxHomeShortcuts){
+        const auto index=static_cast<std::size_t>(command-HomeShortcutBase);
+        if(index<home_preferences_.shortcuts.size())Navigate(Wide(home_preferences_.shortcuts[index].url));
+        return;
+    }
+    if(command>=HomeShortcutRemoveBase && command<HomeShortcutRemoveBase+kMaxHomeShortcuts){
+        RemoveHomeShortcutUi(static_cast<std::size_t>(command-HomeShortcutRemoveBase));
+        return;
+    }
+    if(command>=HomeRecentPinBase && command<HomeRecentPinBase+12){
+        PinHomeRecentSite(static_cast<std::size_t>(command-HomeRecentPinBase));
+        return;
+    }
+    if(command>=HomeRecentHideBase && command<HomeRecentHideBase+12){
+        HideHomeRecentSite(static_cast<std::size_t>(command-HomeRecentHideBase));
+        return;
+    }
+    if(command>=HomeRecentBase && command<HomeRecentBase+12){
+        const auto recent=VisibleHomeRecentSites(6);
+        const auto index=static_cast<std::size_t>(command-HomeRecentBase);
+        if(index<recent.size())Navigate(recent[index].url);
+        return;
+    }
+    if(command>=HistoryHostFilterBase && command<HistoryHostFilterBase+8){
+        const auto sites=BuildHistoryHostSummaries(history_entries_,8);
+        const auto index=static_cast<std::size_t>(command-HistoryHostFilterBase);
+        if(index<sites.size() && native_filter_){SetWindowTextW(native_filter_,sites[index].host.c_str());SetFocus(native_filter_);native_scroll_=0;QueueUI();}
+        return;
+    }
+    if(command>=DeleteHistoryHostBase && command<DeleteHistoryHostBase+8){
+        const auto sites=BuildHistoryHostSummaries(history_entries_,8);
+        const auto index=static_cast<std::size_t>(command-DeleteHistoryHostBase);
+        if(index<sites.size()){
+            const auto host=sites[index].host;
+            const auto prompt=L"Remove all WebCom history entries for "+host+L"?
+
+This does not clear cookies, site storage, permissions, bookmarks or downloaded files.";
+            if(MessageBoxW(window_,prompt.c_str(),L"Clear site from history",MB_YESNO|MB_DEFBUTTON2|MB_ICONQUESTION)==IDYES){
+                const auto removed=DeleteHistoryHost(history_entries_,host);
+                if(removed){SaveHistory();native_scroll_=0;QueueUI();Note(L"Removed "+std::to_wstring(removed)+L" history entr"+(removed==1?L"y.":L"ies."));}
+            }
+        }
+        return;
+    }
+    if(command>=ReopenClosedBase && command<ReopenClosedBase+closed_tabs_.size()){
+        ReopenClosedAt(static_cast<std::size_t>(command-ReopenClosedBase)); return;
+    }
     if(command>=DeleteHistoryBase && command<DeleteHistoryBase+history_entries_.size()){
         const auto index=static_cast<std::size_t>(command-DeleteHistoryBase);
         history_entries_.erase(history_entries_.begin()+static_cast<std::ptrdiff_t>(index));
@@ -5504,6 +6699,9 @@ void BrowserApp::Impl::Dispatch(UINT command, LPARAM extra) {
     }
     if(command>=RetryDownloadBase && command<RetryDownloadBase+download_entries_.size()){
         RetryDownload(static_cast<std::size_t>(command-RetryDownloadBase));return;
+    }
+    if(command>=OpenDownloadSourceBase && command<OpenDownloadSourceBase+download_entries_.size()){
+        OpenDownloadSource(static_cast<std::size_t>(command-OpenDownloadSourceBase), true);return;
     }
     if(command>=DownloadBase && command<DownloadBase+download_entries_.size()){
         auto& item=*download_entries_[command-DownloadBase];
@@ -5573,7 +6771,7 @@ void BrowserApp::Impl::Dispatch(UINT command, LPARAM extra) {
         {
             menu_open_=true;
             struct Reset{bool& value;~Reset(){value=false;}}reset{menu_open_};
-            selected=ShowDarkMenu(owner,anchor,items,dpi_,340,false,&palette_);
+            selected=ShowDarkMenu(owner,anchor,items,dpi_,340,false,&palette_,ReducedMotionActive());
         }
         if(closing_ || window_!=owner || !IsWindow(owner)) return;
         if(selected>=BookmarkBase && selected<BookmarkBase+bookmarks_.size())
@@ -5610,6 +6808,26 @@ void BrowserApp::Impl::Dispatch(UINT command, LPARAM extra) {
     }
     if (command >= ExtensionForgetSourceBase && command < ExtensionForgetSourceBase + extension_sources_.size()) {
         ForgetExtensionSourceMapping(static_cast<std::size_t>(command - ExtensionForgetSourceBase)); return;
+    }
+    if(command==ToastClick){
+        const UINT action=std::exchange(toast_action_command_,0);
+        note_until_=0; if(toast_)ShowWindow(toast_,SW_HIDE);
+        if(action && action!=ToastClick)Dispatch(action);
+        return;
+    }
+    if(command==OpenToastDownload){
+        EnsureDownloadsLoaded();
+        const auto found=std::find_if(download_entries_.begin(),download_entries_.end(),[&](const auto& item){return item&&item->id==toast_download_id_;});
+        toast_download_id_=0;
+        if(found!=download_entries_.end()){
+            RefreshDownload(**found);
+            if((*found)->state==COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED && !(*found)->path.empty()){
+                ShellExecuteW(window_,L"open",(*found)->path.c_str(),nullptr,nullptr,SW_SHOWNORMAL);
+                return;
+            }
+        }
+        OpenInternalPage(L"webcom:downloads");
+        return;
     }
     switch (command) {
     case AppearanceMenu: case ThemeMenu: case ProfileColorMenu: AppearanceOptions(command);break;
@@ -5649,6 +6867,8 @@ void BrowserApp::Impl::Dispatch(UINT command, LPARAM extra) {
     case ImportBookmarks: ImportBookmarksFromFile(); break;
     case ExportBookmarks: ExportBookmarksToFile(); break;
     case ClearHistory: history_entries_.clear(); SaveHistory(); native_scroll_=0; QueueUI(); Note(L"Browsing history cleared."); break;
+    case ClearRecentlyClosed:
+        EnsureRecentlyClosedLoaded(); closed_tabs_.clear(); SaveRecentlyClosedNow(true); native_scroll_=0; QueueUI(); Note(L"Recently closed recovery cleared."); break;
     case HistoryDeleteMatches: {
         const std::wstring query = native_filter_ ? ControlText(native_filter_) : L"";
         const auto removed = DeleteHistoryMatches(history_entries_, query);
@@ -5671,6 +6891,7 @@ void BrowserApp::Impl::Dispatch(UINT command, LPARAM extra) {
         break;
     }
     case ClearDownloadsList: ClearDownloads(); native_scroll_=0; Note(L"Completed download entries cleared."); break;
+    case RetryFailedDownloads: RetryFailedDownloadsNow(); break;
     case OpenDownloadsFolder: {
         PWSTR folder=nullptr;
         if(SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Downloads,0,nullptr,&folder))){
@@ -5699,13 +6920,16 @@ void BrowserApp::Impl::Dispatch(UINT command, LPARAM extra) {
         break;
     case AiMode: Navigate(L"https://www.google.com/aimode"); break;
     case SiteInfo: SiteInfoMenu(); break;
+    case ToggleAdBlockerSite: if(tab)ToggleAdBlockerForTab(*tab); break;
+    case ClearAdBlockerSiteExceptions: ClearAdBlockerSiteExceptionsNow(); break;
     case DownloadsQuick: DownloadQuickMenu(); break;
     case BookmarkPage: BookmarkCurrent(); break;
     case BookmarkMenu: case BookmarksOverflow: {
         RECT r{}; GetWindowRect(GetDlgItem(window_, command == BookmarksOverflow ? BookmarksOverflow : More), &r);
         BookmarksMenu({r.right, r.bottom}); break;
     }
-    case PasswordMenu: case HelpMenu: PreferencesMenu(command); break;
+    case PasswordMenu: OpenInternalPage(L"webcom:passwords"); break;
+    case PerformanceMenu: case HelpMenu: PreferencesMenu(command); break;
     case WorkspaceMenu: WorkspaceMenuPopup(); break;
     case StartupMenu: StartupMenuPopup(); break;
     case FocusCycle: CycleChromeFocus(false); break;
@@ -5731,6 +6955,7 @@ void BrowserApp::Impl::Dispatch(UINT command, LPARAM extra) {
     case ReaderSaveHtml: SaveReaderHtml(); break;
     case ReaderSaveMarkdown: SaveReaderMarkdown(); break;
     case PrivacyResetAllPermissions:
+        EnsureSitePermissionsLoaded();
         if (!site_permissions_.empty() && MessageBoxW(window_, L"Reset all saved site-permission exceptions for this profile?", L"Reset site permissions", MB_YESNO|MB_DEFBUTTON2|MB_ICONQUESTION)==IDYES) {
             site_permissions_.clear(); SaveSitePermissionsNow(); native_scroll_=0; QueueUI(); Note(L"All saved site-permission exceptions were reset.");
         }
@@ -5738,6 +6963,7 @@ void BrowserApp::Impl::Dispatch(UINT command, LPARAM extra) {
     case NextWorkspace: CycleWorkspace(1); break;
     case PreviousWorkspace: CycleWorkspace(-1); break;
     case AddWorkspace: CreateWorkspace(); break;
+    case AddHomeShortcutCmd: AddHomeShortcutUi(); break;
     case RenameWorkspaceCmd: RenameWorkspace(); break;
     case DeleteWorkspaceCmd: DeleteWorkspace(); break;
     case ToggleVerticalTabs: ToggleVerticalTabsMode(); break;
@@ -5773,11 +6999,17 @@ void BrowserApp::Impl::Dispatch(UINT command, LPARAM extra) {
     case SettingsMenu: OpenInternalPage(L"webcom:settings"); break;
     case ShortcutsPage: OpenInternalPage(L"webcom:shortcuts"); break;
     case DiagnosticsPage: OpenInternalPage(L"webcom:diagnostics"); break;
+    case FeedbackPage: OpenInternalPage(L"webcom:feedback"); break;
+    case CopyProblemTemplate: CopyProblemTemplateNow(); break;
     case RecoveryPage: OpenInternalPage(L"webcom:recovery"); break;
     case UpdatesPage: OpenInternalPage(L"webcom:updates"); break;
     case ExtensionsPage: OpenInternalPage(L"webcom:extensions"); EnsureExtensionProfile(); break;
     case ExtensionsRefresh: RefreshExtensions(); break;
     case ExtensionsLoadUnpacked: LoadUnpackedExtension(); break;
+    case ExtensionsFilterAll: extension_view_filter_=ExtensionViewFilter::All; native_scroll_=0; QueueUI(); break;
+    case ExtensionsFilterEnabled: extension_view_filter_=ExtensionViewFilter::Enabled; native_scroll_=0; QueueUI(); break;
+    case ExtensionsFilterDisabled: extension_view_filter_=ExtensionViewFilter::Disabled; native_scroll_=0; QueueUI(); break;
+    case ExtensionsFilterAttention: extension_view_filter_=ExtensionViewFilter::NeedsAttention; native_scroll_=0; QueueUI(); break;
     case WelcomePage: OpenInternalPage(L"webcom:welcome"); break;
     case OpenDefaultApps: OpenDefaultAppsSettings(); break;
     case WelcomeStartBrowsing:
@@ -5890,11 +7122,23 @@ void BrowserApp::Impl::Dispatch(UINT command, LPARAM extra) {
     case ClearSiteCookiesCmd: ClearSiteCookies(); break;
     case ShowCertificateDetailsCmd: ShowCertificateDetails(); break;
     case Saver: case ToggleSaver:
-        state_.memory_mode = state_.memory_mode == MemoryMode::Saver ? MemoryMode::Balanced : MemoryMode::Saver;
-        if(auto session=session_.lock())session->ApplyPreferences();
-        Note(state_.memory_mode == MemoryMode::Saver ? L"Memory Saver on. Eligible background tabs sleep after 1 minute."
-                                                   : L"Balanced mode. Eligible background tabs sleep after 5 minutes.");
-        Dirty(); Tick(); UpdateUI(); break;
+        SetSleepTimeout(sleep_timeout_ == SleepTimeout::OneMinute ? SleepTimeout::FiveMinutes : SleepTimeout::OneMinute);
+        break;
+    case SleepAfter1m: SetSleepTimeout(SleepTimeout::OneMinute); break;
+    case SleepAfter5m: SetSleepTimeout(SleepTimeout::FiveMinutes); break;
+    case SleepAfter15m: SetSleepTimeout(SleepTimeout::FifteenMinutes); break;
+    case SleepAfter30m: SetSleepTimeout(SleepTimeout::ThirtyMinutes); break;
+    case SleepNever: SetSleepTimeout(SleepTimeout::Never); break;
+    case ToggleNeverSleepSite: if (tab) ToggleNeverSleepSiteForTab(*tab); break;
+    case ClearNeverSleepSites:
+        if (never_sleep_hosts_.empty()) { Note(L"No Never sleep sites are saved for this profile."); break; }
+        if (MessageBoxW(window_, L"Clear all Never sleep site exceptions for this profile?", L"Performance", MB_YESNO | MB_DEFBUTTON2 | MB_ICONQUESTION) == IDYES) {
+            const auto previous = never_sleep_hosts_;
+            never_sleep_hosts_.clear();
+            if (!SaveNeverSleepHostsNow(true)) never_sleep_hosts_ = previous;
+            else { Note(L"Never sleep site exceptions cleared."); UpdateUI(); }
+        }
+        break;
     case More: MainMenu(); break;
     case PinTab: case KeepAwake:
         if (tab) {
@@ -5937,6 +7181,8 @@ void BrowserApp::Impl::Dispatch(UINT command, LPARAM extra) {
         }
         break;
     case DuplicateTab: if (tab) Add(tab->url, true, tab->private_mode); break;
+    case CloseDuplicateTabs: if(tab)CloseDuplicateTabsInWorkspace(tab->id); break;
+    case SleepOtherTabs: if(tab)SleepOtherTabsInWorkspace(tab->id); break;
     case MemoryReport: ReportMemory(); break;
     case Downloads: OpenInternalPage(L"webcom:downloads"); break;
     case TogglePasswords: {
@@ -6002,15 +7248,7 @@ void BrowserApp::Impl::Dispatch(UINT command, LPARAM extra) {
             UpdateUI();
         }
         break;
-    case About:
-        MessageBoxW(window_,
-            L"WebCom for Windows v2 public beta\n\nNative C++20 / Win32 with Microsoft Edge WebView2.\n\n"
-            L"Simultaneous profile windows, site permission controls, recent-download bubble, searchable tabs, audio controls and sleeping tabs.\n\n"
-            L"Google may block account sign-in in WebView2. Chrome Sync is not available.\n\n"
-            L"Memory savings depend on pages, tabs and runtime version. This preview has no established RAM-saving percentage.\n\n"
-            L"Use the profile menu for local profiles and Shift+Esc for process memory.",
-            L"About WebCom", MB_OK | MB_ICONINFORMATION);
-        break;
+    case About: OpenInternalPage(L"webcom:about"); break;
     case Exit: PostMessageW(window_, WM_CLOSE, 0, 0); break;
     default: break;
     }
@@ -6079,6 +7317,36 @@ bool BrowserApp::Impl::HandleKeyMessage(const MSG& message) {
         std::find(toolbar_.begin(), toolbar_.end(), message.hwnd) != toolbar_.end() ||
         std::find(bookmark_buttons_.begin(), bookmark_buttons_.end(), message.hwnd) != bookmark_buttons_.end() ||
         std::find(home_buttons_.begin(), home_buttons_.end(), message.hwnd) != home_buttons_.end();
+    if (!ctrl && !alt && GetFocus()==window_) {
+        const auto* active=Active();
+        const auto page=active?InternalPageFor(active->url):InternalPage::None;
+        if(active && !active->web && page!=InternalPage::None && page!=InternalPage::NewTab && !native_actions_.empty()) {
+            std::vector<UINT> commands;commands.reserve(native_actions_.size());
+            for(const auto& action:native_actions_)if(action.command && std::find(commands.begin(),commands.end(),action.command)==commands.end())commands.push_back(action.command);
+            if(!commands.empty()) {
+                const auto current=std::find(commands.begin(),commands.end(),focused_native_command_);
+                if(message.wParam==VK_RETURN || message.wParam==VK_SPACE) {
+                    if(current!=commands.end()){const UINT selected=*current;focused_native_command_=0;Dispatch(selected);return true;}
+                }
+                const bool forward=message.wParam==VK_TAB || message.wParam==VK_DOWN || message.wParam==VK_RIGHT;
+                const bool backward=(message.wParam==VK_TAB && shift) || message.wParam==VK_UP || message.wParam==VK_LEFT;
+                if(forward || backward) {
+                    std::ptrdiff_t index=current==commands.end()?(backward?static_cast<std::ptrdiff_t>(commands.size()):-1):current-commands.begin();
+                    index += backward?-1:1;
+                    if(index<0 || index>=static_cast<std::ptrdiff_t>(commands.size())) {
+                        focused_native_command_=0;
+                        if(backward)FocusOmnibox();else if(tab_strip_)SetFocus(tab_strip_);
+                    } else {
+                        focused_native_command_=commands[static_cast<std::size_t>(index)];
+                        const RECT content=ContentBounds();InvalidateRect(window_,&content,FALSE);
+                        NotifyNativeActionFocus();
+                    }
+                    return true;
+                }
+                if(message.wParam==VK_ESCAPE){focused_native_command_=0;if(tab_strip_)SetFocus(tab_strip_);return true;}
+            }
+        }
+    }
     if (native_control && ctrl && !alt && message.wParam == 'F') { Dispatch(SearchInPage); return true; }
     if (native_control && !ctrl && !alt && (message.wParam == VK_NEXT || message.wParam == VK_PRIOR) &&
         (ScrollPrivate(message.wParam == VK_NEXT ? D(160) : -D(160)) ||
@@ -6181,7 +7449,7 @@ LRESULT CALLBACK BrowserApp::Impl::SuggestionProc(HWND window, UINT message, WPA
         for(std::size_t i=0;i<app->omnibox_suggestions_.size();++i) {
             RECT r{app->D(5),top+static_cast<int>(i)*row,bounds.right-app->D(5),top+static_cast<int>(i+1)*row};
             unsigned hover_amount=static_cast<int>(i)==app->omnibox_hot_?100u:0u;
-            if(!app->appearance_.reduce_motion && app->omnibox_hover_start_)hover_amount=ChromeHoverAmount(static_cast<int>(i),app->omnibox_hover_from_,app->omnibox_hover_to_,
+            if(!app->ReducedMotionActive() && app->omnibox_hover_start_)hover_amount=ChromeHoverAmount(static_cast<int>(i),app->omnibox_hover_from_,app->omnibox_hover_to_,
                 GetTickCount64()-app->omnibox_hover_start_);
             if(static_cast<int>(i)==app->omnibox_selected_)hover_amount=100;
             if(hover_amount){
@@ -6209,13 +7477,13 @@ LRESULT CALLBACK BrowserApp::Impl::SuggestionProc(HWND window, UINT message, WPA
         const int next=index>=0 && static_cast<std::size_t>(index)<app->omnibox_suggestions_.size()?index:-1;
         if(next!=app->omnibox_hot_){
             app->omnibox_hover_from_=app->omnibox_hot_;app->omnibox_hover_to_=next;
-            app->omnibox_hover_start_=app->appearance_.reduce_motion?0:GetTickCount64();
-            app->omnibox_hot_=next;if(!app->appearance_.reduce_motion)SetTimer(app->window_,kAnimationFrame,16,nullptr);InvalidateRect(window,nullptr,FALSE);
+            app->omnibox_hover_start_=app->ReducedMotionActive()?0:GetTickCount64();
+            app->omnibox_hot_=next;if(!app->ReducedMotionActive())SetTimer(app->window_,kAnimationFrame,16,nullptr);InvalidateRect(window,nullptr,FALSE);
         }
         TRACKMOUSEEVENT track{sizeof(track),TME_LEAVE,window,0};TrackMouseEvent(&track);return 0;
     }
     if(message==WM_MOUSELEAVE){
-        if(app->omnibox_hot_>=0){app->omnibox_hover_from_=app->omnibox_hot_;app->omnibox_hover_to_=-1;app->omnibox_hover_start_=app->appearance_.reduce_motion?0:GetTickCount64();if(!app->appearance_.reduce_motion)SetTimer(app->window_,kAnimationFrame,16,nullptr);}
+        if(app->omnibox_hot_>=0){app->omnibox_hover_from_=app->omnibox_hot_;app->omnibox_hover_to_=-1;app->omnibox_hover_start_=app->ReducedMotionActive()?0:GetTickCount64();if(!app->ReducedMotionActive())SetTimer(app->window_,kAnimationFrame,16,nullptr);}
         app->omnibox_hot_=-1;InvalidateRect(window,nullptr,FALSE);return 0;
     }
     if(message==WM_LBUTTONUP) {
@@ -6350,8 +7618,8 @@ LRESULT CALLBACK BrowserApp::Impl::TabProc(HWND window, UINT message, WPARAM wpa
             if(hit!=app->hot_tab_){
                 app->hover_animation_from_=app->hot_tab_;
                 app->hover_animation_to_=hit;
-                app->hover_animation_start_=app->appearance_.reduce_motion?0:GetTickCount64();
-                if(!app->appearance_.reduce_motion)SetTimer(app->window_,kAnimationFrame,16,nullptr);
+                app->hover_animation_start_=app->ReducedMotionActive()?0:GetTickCount64();
+                if(!app->ReducedMotionActive())SetTimer(app->window_,kAnimationFrame,16,nullptr);
             }
             app->hot_tab_=hit;app->hot_close_=close;InvalidateRect(window,nullptr,FALSE);
         }
@@ -6362,8 +7630,8 @@ LRESULT CALLBACK BrowserApp::Impl::TabProc(HWND window, UINT message, WPARAM wpa
         if(app->hot_tab_>=0){
             app->hover_animation_from_=app->hot_tab_;
             app->hover_animation_to_=-1;
-            app->hover_animation_start_=app->appearance_.reduce_motion?0:GetTickCount64();
-            if(!app->appearance_.reduce_motion)SetTimer(app->window_,kAnimationFrame,16,nullptr);
+            app->hover_animation_start_=app->ReducedMotionActive()?0:GetTickCount64();
+            if(!app->ReducedMotionActive())SetTimer(app->window_,kAnimationFrame,16,nullptr);
         }
         app->hot_tab_=-1;app->hot_close_=false;InvalidateRect(window,nullptr,FALSE);return 0;
     }
@@ -6415,14 +7683,30 @@ LRESULT CALLBACK BrowserApp::Impl::ButtonProc(HWND window, UINT message, WPARAM 
 }
 
 LRESULT BrowserApp::Impl::Message(UINT message, WPARAM wparam, LPARAM lparam) {
+    if (message == WM_GETOBJECT && static_cast<LONG>(lparam) == OBJID_CLIENT && client_accessible_)
+        return LresultFromObject(IID_IAccessible, wparam, client_accessible_.Get());
     switch (message) {
     case WM_ACTIVATE:
         if(LOWORD(wparam)==WA_INACTIVE) HideOmniboxSuggestions();
         else if(!closing_){
+            const auto before=AccessibilityPolicyNow();
+            RefreshSystemAccessibility();
+            const auto after=AccessibilityPolicyNow();
+            if(before.reduce_motion!=after.reduce_motion || before.high_contrast!=after.high_contrast)ApplyAppearance();
             if(auto session=session_.lock())session->ActivateProfile(profile_name_);
             Dirty();
         }
         break;
+    case WM_SETTINGCHANGE:
+    case WM_THEMECHANGED:
+    case WM_SYSCOLORCHANGE: {
+        const auto before=AccessibilityPolicyNow();
+        RefreshSystemAccessibility();
+        const auto after=AccessibilityPolicyNow();
+        if(before.reduce_motion!=after.reduce_motion || before.high_contrast!=after.high_contrast)ApplyAppearance();
+        else if(window_)RedrawWindow(window_,nullptr,nullptr,RDW_INVALIDATE|RDW_ALLCHILDREN|RDW_NOERASE);
+        return 0;
+    }
     case WM_MOUSEWHEEL: {
         const int delta=-GET_WHEEL_DELTA_WPARAM(wparam) * D(48) / WHEEL_DELTA;
         if (ScrollPrivate(delta) || ScrollInternal(delta)) return 0;
@@ -6455,8 +7739,8 @@ LRESULT BrowserApp::Impl::Message(UINT message, WPARAM wparam, LPARAM lparam) {
             }
         }
         UINT hot=0;
-        if (auto* tab=Active(); tab && !tab->web && InternalPageFor(tab->url)!=InternalPage::None &&
-            InternalPageFor(tab->url)!=InternalPage::NewTab) {
+        if (auto* tab=Active(); tab && !tab->web &&
+            ((InternalPageFor(tab->url)!=InternalPage::None && InternalPageFor(tab->url)!=InternalPage::NewTab) || tab->failed)) {
             for(auto it=native_actions_.rbegin();it!=native_actions_.rend();++it) if(it->command && PtInRect(&it->rect,point)){hot=it->command;break;}
         }
         if(hot_native_command_!=hot){hot_native_command_=hot;const RECT content=ContentBounds();InvalidateRect(window_,&content,FALSE);}
@@ -6554,12 +7838,15 @@ LRESULT BrowserApp::Impl::Message(UINT message, WPARAM wparam, LPARAM lparam) {
         for (auto& tab : tabs_) if (tab->controller) tab->controller->NotifyParentWindowPositionChanged();
         return 0;
     case WM_DPICHANGED: {
-        dpi_ = HIWORD(wparam);
+        dpi_ = std::clamp<UINT>(HIWORD(wparam),72u,768u);
         const auto* rect = reinterpret_cast<const RECT*>(lparam);
         Fonts();
+        native_chrome_.frame.Reset();native_chrome_.tabs.Reset();native_chrome_.button.Reset();native_chrome_.native_page=-1;
         SetWindowPos(window_, nullptr, rect->left, rect->top, rect->right - rect->left, rect->bottom - rect->top,
                      SWP_NOZORDER | SWP_NOACTIVATE);
-        Layout(); return 0;
+        Layout();
+        RedrawWindow(window_,nullptr,nullptr,RDW_INVALIDATE|RDW_ALLCHILDREN|RDW_NOERASE);
+        return 0;
     }
     case WM_GETMINMAXINFO: {
         auto* info = reinterpret_cast<MINMAXINFO*>(lparam);
@@ -6622,7 +7909,7 @@ LRESULT BrowserApp::Impl::Message(UINT message, WPARAM wparam, LPARAM lparam) {
             UpdateUI(address_tab && Active() && Active()->id==address_tab && !address_editing_ && !menu_open_);
         }
         if (wparam == kAnimationFrame) {
-            if (appearance_.reduce_motion) {
+            if (ReducedMotionActive()) {
                 tab_transition_until_=0;hover_animation_start_=0;hover_animation_from_=-1;hover_animation_to_=-1;
                 tab_reflow_start_=0;tab_reflow_from_.clear();omnibox_hover_start_=0;omnibox_hover_from_=-1;omnibox_hover_to_=-1;
                 KillTimer(window_,kAnimationFrame);if(tab_strip_)InvalidateRect(tab_strip_,nullptr,FALSE);
@@ -6666,7 +7953,7 @@ LRESULT BrowserApp::Impl::Message(UINT message, WPARAM wparam, LPARAM lparam) {
         if (wparam == kTick) Tick();
         if (wparam == kUpdateHealth) ConfirmUpdateHealth();
         if (wparam == kSave) { KillTimer(window_, kSave); Save(false); }
-        if (wparam == kToast) { KillTimer(window_, kToast); note_until_ = 0; ShowWindow(toast_, SW_HIDE); }
+        if (wparam == kToast) { KillTimer(window_, kToast); note_until_ = 0; toast_action_command_=0; toast_download_id_=0; ShowWindow(toast_, SW_HIDE); }
         return 0;
     case kNotice: {
         queued_notice_ = false;

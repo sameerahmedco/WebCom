@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory=$true)][string]$StablePackage,
     [string]$BetaManifest = '',
     [string]$BetaPackage = '',
-    [Parameter(Mandatory=$true)][string]$ExpectedPublisherSha256
+    [Parameter(Mandatory=$true)][string]$ExpectedPublisherSha256,
+    [string]$OutputJson = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -49,3 +50,30 @@ if ($BetaManifest) {
 
 Write-Host "Stable release accepted: $($stable.version)" -ForegroundColor Green
 Write-Host 'Release-matrix policy passed: channels, signer pin, package hashes/sizes/signatures, and version resources are internally consistent.' -ForegroundColor Green
+
+if ($OutputJson) {
+    $resolvedOutput = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputJson)
+    $outputParent = Split-Path -Parent $resolvedOutput
+    if ($outputParent) { New-Item -ItemType Directory -Path $outputParent -Force | Out-Null }
+    $summary = [ordered]@{
+        schema = 'webcom-release-matrix-v2'
+        generatedAt = (Get-Date).ToString('o')
+        publisherSha256 = $ExpectedPublisherSha256.ToLowerInvariant()
+        stable = [ordered]@{
+            version = $stable.version
+            package = (Resolve-Path -LiteralPath $StablePackage).Path
+            packageSha256 = $stable.sha256.ToLowerInvariant()
+            manifest = (Resolve-Path -LiteralPath $StableManifest).Path
+        }
+        beta = $(if ($BetaManifest) {
+            [ordered]@{
+                version = $beta.version
+                package = (Resolve-Path -LiteralPath $BetaPackage).Path
+                packageSha256 = $beta.sha256.ToLowerInvariant()
+                manifest = (Resolve-Path -LiteralPath $BetaManifest).Path
+            }
+        } else { $null })
+    }
+    $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $resolvedOutput -Encoding UTF8
+    Write-Host "Release-matrix report: $resolvedOutput"
+}

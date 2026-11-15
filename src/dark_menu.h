@@ -39,6 +39,6 @@ struct MenuItem {
 // small vector hat-and-glasses icon matching the reference design.
 UINT ShowDarkMenu(HWND owner, POINT anchor_screen, const std::vector<MenuItem>& items,
                   UINT dpi = 96, int width_dip = 334, bool align_right = true,
-                  const Palette* palette = nullptr);
+                  const Palette* palette = nullptr, bool reduce_motion = false);
 
 } // namespace webcom

@@ -35,6 +35,19 @@ int main() {
     copy = entries;
     Check(DeleteHistoryRange(copy, 3500, 1500) == 2 && copy.size() == 2 && copy[0].visited_ms == 1000 && copy[1].visited_ms == 4000,
           "range deletion accepts reversed bounds and is inclusive");
+    std::vector<HistoryRecord> hosts{
+        {L"https://www.example.com/a", L"A", 5},
+        {L"https://example.com/b", L"B", 4},
+        {L"https://news.example.org/", L"News", 3},
+        {L"http://example.net/", L"Net", 2}
+    };
+    Check(HistoryHost(hosts[0].url) == L"example.com", "history host normalizes www");
+    const auto summaries = BuildHistoryHostSummaries(hosts, 8);
+    Check(summaries.size() == 3, "history host summary deduplicates hosts");
+    Check(summaries[0].host == L"example.com" && summaries[0].visits == 2, "history host summary sorts by visit count");
+    Check(DeleteHistoryHost(hosts, L"EXAMPLE.com") == 2, "delete history host is case insensitive");
+    Check(hosts.size() == 2, "delete history host keeps other sites");
+
     std::cout << checks << " checks, " << failures << " failures\n";
     return failures ? 1 : 0;
 }

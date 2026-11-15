@@ -279,6 +279,20 @@ int main(int argc, char** argv) {
         }
     }
 
+    const auto onboarding_model = ReadAll(root / "src" / "onboarding_model.cpp");
+    if (!onboarding_model.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,4>{{
+            {"BuildOnboardingProgress", "Welcome setup progress must be computed by the portable onboarding model"},
+            {"bookmark_count > 0", "Welcome progress must recognize bookmark setup"},
+            {"workspace_count > 1", "Welcome progress must recognize multi-workspace setup"},
+            {"update_checks_enabled", "Welcome progress must recognize update-check setup"}
+        }}) {
+            ++checks;
+            if (onboarding_model.find(token) == std::string::npos)
+                findings.push_back({"src/onboarding_model.cpp", 0, std::string(message)});
+        }
+    }
+
     const auto runtime_log = ReadAll(root / "src" / "runtime_log.cpp");
     if (!runtime_log.empty()) {
         for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,4>{{
@@ -308,6 +322,30 @@ int main(int argc, char** argv) {
     ++checks;
     if (!profile_host.empty() && profile_host.find("ExtensionSourcesPath(root,deleted)") == std::string::npos)
         findings.push_back({"src/profile_host_impl.inl", 0, "profile deletion must remove per-profile extension source metadata"});
+    ++checks;
+    if (!profile_host.empty() && profile_host.find("root / \"AdBlocker\" / (lower+\".v1\")") == std::string::npos)
+        findings.push_back({"src/profile_host_impl.inl", 0, "profile deletion must remove per-profile Ad Blocker site exceptions"});
+    ++checks;
+    if (!profile_host.empty() && profile_host.find("ad_blocker_extension_.Reset()") == std::string::npos)
+        findings.push_back({"src/profile_host_impl.inl", 0, "browser-engine recovery must release the bundled Ad Blocker extension handle"});
+
+    const auto ad_blocker_preferences = ReadAll(root / "src" / "ad_blocker_preferences.cpp");
+    if (!ad_blocker_preferences.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,8>{{
+            {"kMaxAdBlockerSiteExceptions", "Ad Blocker site exceptions must remain bounded"},
+            {"WEBCOM_AD_BLOCKER\\t1", "Ad Blocker site exceptions must use a versioned profile-scoped format"},
+            {"IsValidProfileName(profile)", "Ad Blocker site exception persistence must reject unsafe profile names"},
+            {"AtomicWrite", "Ad Blocker site exceptions must be persisted atomically"},
+            {"NormalizeAdBlockerHost", "Ad Blocker site exceptions must normalize and validate DNS-style hosts"},
+            {"RenderAdBlockerNetworkRules", "Ad Blocker v2 must generate profile-specific DNR exclusions from the saved site list"},
+            {"excludedInitiatorDomains", "Ad Blocker v2 must render DNR initiator exclusions rather than faking a UI-only site toggle"},
+            {"BuildAdBlockerSiteConfigScript", "Ad Blocker v2 must generate the matching page-level cosmetic/YouTube bypass config"}
+        }}) {
+            ++checks;
+            if (ad_blocker_preferences.find(token) == std::string::npos)
+                findings.push_back({"src/ad_blocker_preferences.cpp", 0, std::string(message)});
+        }
+    }
 
     const auto extension_model = ReadAll(root / "src" / "extension_model.cpp");
     if (!extension_model.empty()) {
@@ -326,9 +364,25 @@ int main(int argc, char** argv) {
         }
     }
 
+    const auto extension_view_model = ReadAll(root / "src" / "extension_view_model.cpp");
+    if (!extension_view_model.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,6>{{
+            {"ExtensionNeedsAttention", "Extensions v2 must classify source-health attention through the portable view model"},
+            {"ExtensionMatchesFilter", "Extensions v2 must keep All/Enabled/Disabled/Attention filtering portable"},
+            {"ExtensionMatchesText", "Extensions v2 search must use the portable case-insensitive matcher"},
+            {"state.built_in", "built-in extensions must not require an unpacked source mapping"},
+            {"state.source_changed", "changed unpacked sources must surface as needing attention"},
+            {"AddExtensionViewCount", "Extensions v2 filter chips must use shared counts"}
+        }}) {
+            ++checks;
+            if (extension_view_model.find(token) == std::string::npos)
+                findings.push_back({"src/extension_view_model.cpp", 0, std::string(message)});
+        }
+    }
+
     const auto extension_sources = ReadAll(root / "src" / "extension_sources.cpp");
     if (!extension_sources.empty()) {
-        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,10>{{
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,12>{{
             {"kMaxRecords = 64", "extension source metadata must remain record-bounded"},
             {"kMaxBytes = 128u * 1024u", "extension source metadata must remain size-bounded"},
             {"kMaxSnapshotFiles = 4096", "extension source change detection must remain file-count bounded"},
@@ -359,16 +413,86 @@ int main(int argc, char** argv) {
             if (annotation_editor.find(token) == std::string::npos)
                 findings.push_back({"src/annotation_editor.cpp", 0, std::string(message)});
         }
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,4>{{
+            {"std::clamp(point.x", "untyped std::clamp on POINT.x recreates the MSVC LONG/int ambiguity seen in the Windows build log"},
+            {"std::clamp(point.y", "untyped std::clamp on POINT.y recreates the MSVC LONG/int ambiguity seen in the Windows build log"},
+            {"DrawLine(&pen,a.x", "raw POINT LONG coordinates recreate the ambiguous GDI+ DrawLine overload under MSVC"},
+            {"DrawLine(&pen, a.x", "raw POINT LONG coordinates recreate the ambiguous GDI+ DrawLine overload under MSVC"}
+        }}) {
+            ++checks;
+            if (annotation_editor.find(token) != std::string::npos)
+                findings.push_back({"src/annotation_editor.cpp", 0, std::string(message)});
+        }
     }
 
     const auto windows_ui_tests = ReadAll(root / "tests" / "windows_ui_tests.cpp");
     if (!windows_ui_tests.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,5>{{
+            {"#include \"storage.h\"", "Windows UI tests must include the declaration that owns StartupMode and SavedProfile"},
+            {"webcom::SavedProfile SeedProfile", "Windows UI seed profiles must use field-explicit construction instead of a brittle positional aggregate"},
+            {"profile.startup_mode = webcom::StartupMode::Continue", "Windows UI seed startup mode must stay explicitly namespace-qualified"},
+            {"SeedProfile(\"Default\"", "Default UI-test profile must use the field-explicit seed helper"},
+            {"SeedProfile(\"Work\"", "Work UI-test profile must use the field-explicit seed helper"}
+        }}) {
+            ++checks;
+            if (windows_ui_tests.find(token) == std::string::npos)
+                findings.push_back({"tests/windows_ui_tests.cpp", 0, std::string(message)});
+        }
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,3>{{
+            {"false,false,StartupMode::Continue", "unqualified StartupMode::Continue is an MSVC compile regression outside namespace webcom"},
+            {"false,false,webcom::StartupMode::Continue", "positional SavedProfile startup-mode aggregates are intentionally forbidden in the Windows UI harness"},
+            {"seed.profiles = {\n            {\"Default\"", "Windows UI seed profiles must not return to field-order-sensitive aggregate initialization"}
+        }}) {
+            ++checks;
+            if (windows_ui_tests.find(token) != std::string::npos)
+                findings.push_back({"tests/windows_ui_tests.cpp", 0, std::string(message)});
+        }
+    }
+
+    if (!app_source.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,12>{{
+            {"void BrowserApp::Impl::RefreshPerformanceTimer()", "performance polling must be centrally rescheduled when the sleep policy changes"},
+            {"PerformanceTickIntervalMs(sleep_timeout_)", "performance polling must use the portable adaptive interval policy"},
+            {"if (interval) SetTimer(window_, kTick, interval, nullptr)", "Never-sleep mode must be able to leave the automatic performance timer disabled"},
+            {"void BrowserApp::Impl::EnsureDownloadsLoaded()", "download history must support first-use loading"},
+            {"if (!downloads_loaded_) return;", "shutdown must not overwrite an untouched lazy download-history store"},
+            {"void BrowserApp::Impl::EnsureSitePermissionsLoaded()", "site-permission rules must support first-use loading"},
+            {"if (!current->private_mode) app->EnsureSitePermissionsLoaded();", "permission decisions must load persisted rules before answering normal-profile requests"},
+            {"void BrowserApp::Impl::EnsureNamedSessionsLoaded()", "saved sessions must support first-use loading"},
+            {"void BrowserApp::Impl::EnsureExtensionSourcesLoaded()", "unpacked-extension source metadata must support first-use loading"},
+            {"EnsureExtensionSourcesLoaded();", "unpacked installs must load existing source mappings before mutation"},
+            {"EnsureInternalPageData(InternalPage page)", "native internal pages must load only the bounded datasets they render"},
+            {"RefreshPerformanceTimer();", "sleep-policy changes must immediately reschedule automatic polling"}
+        }}) {
+            ++checks;
+            if (app_source.find(token) == std::string::npos)
+                findings.push_back({"src/app.cpp", 0, std::string(message)});
+        }
         ++checks;
-        if (windows_ui_tests.find("webcom::StartupMode::Continue") == std::string::npos)
-            findings.push_back({"tests/windows_ui_tests.cpp", 0, "Windows UI tests must qualify StartupMode outside namespace webcom"});
+        if (app_source.find("SetTimer(window_, kTick, 10000") != std::string::npos)
+            findings.push_back({"src/app.cpp", 0, "fixed 10-second performance polling must not return after adaptive scheduling"});
+
+        const auto ctor_start = app_source.find("Impl(HINSTANCE instance,const std::shared_ptr<Session>& session,std::string profile)");
         ++checks;
-        if (windows_ui_tests.find("false,false,StartupMode::Continue") != std::string::npos)
-            findings.push_back({"tests/windows_ui_tests.cpp", 0, "unqualified StartupMode::Continue is an MSVC compile regression outside namespace webcom"});
+        if (ctor_start == std::string::npos) {
+            findings.push_back({"src/app.cpp", 0, "browser constructor could not be located for cold-start I/O checks"});
+        } else {
+            const auto ctor_end = app_source.find("~Impl();", ctor_start);
+            const auto ctor = app_source.substr(ctor_start, ctor_end == std::string::npos ? std::min<std::size_t>(6000, app_source.size()-ctor_start) : ctor_end-ctor_start);
+            for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,5>{{
+                {"LoadDownloads();", "persisted download history must remain off the ordinary constructor path"},
+                {"LoadSitePermissions(root_, profile_name_)", "site-permission file I/O must remain off the ordinary constructor path"},
+                {"LoadNamedSessions(root_, profile_name_)", "saved-session file I/O must remain off the ordinary constructor path"},
+                {"LoadExtensionSources(root_, profile_name_)", "unpacked-extension source metadata must remain off the ordinary constructor path"},
+                {"RefreshExtensionSourceHealth();", "unpacked-extension folder scans must remain off the ordinary constructor path"}
+            }}) {
+                ++checks;
+                if (ctor.find(token) != std::string::npos) findings.push_back({"src/app.cpp", 0, std::string(message)});
+            }
+        }
+        ++checks;
+        if (app_source.find("PWSTR raw = nullptr;\n    PWSTR raw = nullptr;") != std::string::npos)
+            findings.push_back({"src/app.cpp", 0, "LoadUnpackedExtension contains a duplicate PWSTR declaration that fails MSVC compilation"});
     }
 
     if (!app_source.empty()) {
@@ -390,7 +514,7 @@ int main(int argc, char** argv) {
     }
 
     if (!app_source.empty()) {
-        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,13>{{
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,24>{{
             {"ICoreWebView2Profile7", "extension manager must use the versioned WebView2 profile interface"},
             {"GetBrowserExtensions", "extension manager must enumerate installed extensions through WebView2"},
             {"AddBrowserExtension", "extension manager must install only through WebView2's extension API"},
@@ -403,11 +527,38 @@ int main(int argc, char** argv) {
             {"OpenExtensionSourceFolder", "extension manager must expose the recorded source folder"},
             {"ShowExtensionDetails", "extension manager must expose compatibility/permission details"},
             {"ShowExtensionSourceDetails", "known unpacked sources must expose developer diagnostics"},
-            {"ForgetExtensionSourceMapping", "known unpacked sources must have a non-destructive forget action"}
+            {"ForgetExtensionSourceMapping", "known unpacked sources must have a non-destructive forget action"},
+            {"ExtensionsFilterAll", "Extensions v2 must expose an All filter command"},
+            {"ExtensionsFilterEnabled", "Extensions v2 must expose an Enabled filter command"},
+            {"ExtensionsFilterDisabled", "Extensions v2 must expose a Disabled filter command"},
+            {"ExtensionsFilterAttention", "Extensions v2 must expose a Needs-attention filter command"},
+            {"PrepareAdBlockerProfileAssets", "Ad Blocker v2 must generate profile-specific assets before loading the bundled extension"},
+            {"RenderAdBlockerNetworkRules", "bundled blocker loading must render saved site exceptions into DNR rules"},
+            {"BuildAdBlockerSiteConfigScript", "bundled blocker loading must render the same site exceptions into page helpers"},
+            {"ReloadBundledAdBlocker", "site exception changes must reload the bundled extension instead of changing only UI state"},
+            {"ToggleAdBlockerForTab", "site information must expose a real per-site blocker toggle"},
+            {"AdBlockerHostFromUrl", "site blocker controls must derive a validated HTTP(S) host"},
+            {"ad_blocker_extension_ = extension", "WebCom must retain the bundled extension handle for safe site-setting reloads"}
         }}) {
             ++checks;
             if (app_source.find(token) == std::string::npos)
                 findings.push_back({"src/app.cpp", 0, std::string(message)});
+        }
+    }
+
+    if (!app_source.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,8>{{
+            {"HomeRecentBase = 22400", "New Tab recent-site commands must use a dedicated bounded command range"},
+            {"HomeShortcutBase = 22500", "custom New Tab shortcuts must use a dedicated bounded command range"},
+            {"HomeRecentPinBase = 22700", "recent-site pin actions must use a dedicated bounded command range"},
+            {"VisibleHomeRecentSites(6)", "recent-site dispatch must rebuild the visible bounded model before navigation"},
+            {"Navigate(recent[index].url)", "recent-site cards must navigate the current New Tab rather than spawning hidden renderers"},
+            {"AddHomeShortcutUi", "New Tab must expose a user-driven custom shortcut creation path"},
+            {"HideHomeRecentSite", "New Tab must let users hide a recent site without deleting history"},
+            {"SaveHomePreferencesNow", "New Tab shortcut/recent-site preferences must persist per profile"}
+        }}) {
+            ++checks;
+            if (app_source.find(token) == std::string::npos) findings.push_back({"src/app.cpp", 0, std::string(message)});
         }
     }
 
@@ -423,22 +574,241 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (!app_source.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,15>{{
+            {"class BrowserApp::Impl::NativeClientAccessible final : public IAccessible", "painted native pages must expose a client accessibility provider"},
+            {"CreateStdAccessibleObject(window_, OBJID_CLIENT", "native-page accessibility must wrap the standard Win32 client tree rather than replace real child controls"},
+            {"ROLE_SYSTEM_PUSHBUTTON", "painted native-page actions must expose push-button semantics"},
+            {"NativeActionAccessibleName", "painted native-page actions must expose meaningful accessible names"},
+            {"EVENT_OBJECT_FOCUS", "keyboard focus changes on painted actions must notify accessibility clients"},
+            {"client_accessible_.Get()", "the main client WM_GETOBJECT path must return the native-page accessibility wrapper"},
+            {"NativeAccessibleActionIndex", "the Windows provider must use the portable virtual-child resolver"},
+            {"NativeAccessibleChildId", "the Windows provider must use bounded virtual child IDs"},
+            {"NativeAccessibleNextAction", "MSAA action navigation must use the tested portable navigation model"},
+            {"std::wstring name;", "native painted actions must retain an accessibility label alongside command and bounds"},
+            {"tab->private_mode && IsHome(tab->url)", "private New Tab must not expose stale painted action children"},
+            {"if (!tab || tab->web || tab->creating) return 0;", "web/loading tabs must not expose stale painted action children"},
+            {"command >= PrivacyPermissionBase && command < PrivacyPermissionBase + 512", "accessibility naming must not materialize site-permission origins for unrelated painted actions"}
+        }}) {
+            ++checks;
+            if (app_source.find(token) == std::string::npos) findings.push_back({"src/app.cpp", 0, std::string(message)});
+        }
+    }
+
+    const auto native_ui_accessibility = ReadAll(root / "src" / "native_ui.inl");
+    if (!app_source.empty() && !native_ui_accessibility.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,9>{{
+            {"SystemClientAnimationsEnabled()", "browser chrome must observe the Windows client-animation policy"},
+            {"RefreshSystemAccessibility();", "system accessibility state must be cached before appearance is applied"},
+            {"case WM_SETTINGCHANGE:", "system accessibility changes must refresh without restarting WebCom"},
+            {"case WM_THEMECHANGED:", "Windows theme/high-contrast changes must refresh browser chrome live"},
+            {"dpi_ = std::clamp<UINT>(HIWORD(wparam),72u,768u);", "DPI transitions must validate the new DPI before scaling native chrome"},
+            {"focused_native_command_", "painted native-page actions must retain explicit keyboard focus state"},
+            {"message.wParam==VK_RETURN || message.wParam==VK_SPACE", "focused native-page actions must activate from keyboard"},
+            {"FocusOutline(dc,ring", "native-page keyboard actions must expose a visible focus ring"},
+            {"page!=InternalPage::None && page!=InternalPage::NewTab && !native_actions_.empty()", "F6 focus cycling must enter actionable native internal pages"}
+        }}) {
+            ++checks;
+            const bool native_token = token == std::string_view("FocusOutline(dc,ring");
+            const auto& source = native_token ? native_ui_accessibility : app_source;
+            if (source.find(token) == std::string::npos) findings.push_back({native_token ? fs::path("src/native_ui.inl") : fs::path("src/app.cpp"), 0, std::string(message)});
+        }
+    }
+
+    if (!app_source.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,7>{{
+            {"KeepDownloadHistoryRecord", "download loading must apply the bounded completed-history retention policy"},
+            {"in.close();", "download history must release the source file before persisting pruned entries on Windows"},
+            {"RetryFailedDownloadIndices(records, 5)", "bulk retry must use the portable bounded candidate policy"},
+            {"At most five sources are handled at once", "bulk retry confirmation must disclose its hard source-page bound"},
+            {"OpenDownloadSource", "downloads must expose a validated original-source action"},
+            {"ResolveAddress(Utf8(item.uri))", "download source reopening must pass through the normal safe address resolver"},
+            {"Add(Wide(resolved.url), false, false)", "bulk retry fallback must open validated sources in background tabs rather than repeatedly stealing focus"}
+        }}) {
+            ++checks;
+            if (app_source.find(token) == std::string::npos)
+                findings.push_back({"src/app.cpp", 0, std::string(message)});
+        }
+    }
+
+    if (!app_source.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,5>{{
+            {"CloseDuplicateTabsInWorkspace", "tab productivity must expose workspace-scoped duplicate cleanup"},
+            {"DuplicateTabCloseCandidates", "duplicate cleanup must delegate candidate selection to the portable model"},
+            {"Pinned tabs, the active tab and tabs with downloads are protected", "duplicate cleanup confirmation must state its safety boundary"},
+            {"SleepOtherTabsInWorkspace", "tab productivity must expose workspace-scoped sleep-other-tabs"},
+            {"Suspend(*item,true)", "sleep-other-tabs must reuse WebCom's normal suspension safety path"}
+        }}) {
+            ++checks;
+            if (app_source.find(token) == std::string::npos) findings.push_back({"src/app.cpp", 0, std::string(message)});
+        }
+    }
+
+    if (!app_source.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,14>{{
+            {"LoadSleepTimeoutPreference(root_, profile_name_)", "browser startup must load the separate per-profile sleep-timeout preference"},
+            {"LoadNeverSleepHostsPreference(root_, profile_name_)", "browser startup must load bounded per-profile Never sleep site exceptions"},
+            {"SleepTimeout sleep_timeout_ = SleepTimeout::FiveMinutes", "browser must keep an explicit compatibility-default sleep timeout"},
+            {"ShouldSuspend(tab->activity, now, sleep_timeout_)", "automatic tab sleeping must use the configured timeout instead of only the legacy MemoryMode"},
+            {"ContainsNeverSleepHost(never_sleep_hosts_, automatic_sleep_host)", "automatic sleeping must honor Never sleep site exceptions before suspension"},
+            {"SaveSleepTimeoutPreference(root_, profile_name_, sleep_timeout_", "sleep-timeout changes must persist through the dedicated preference store"},
+            {"SaveNeverSleepHostsPreference(root_, profile_name_, sleep_timeout_, never_sleep_hosts_", "Never sleep site changes must preserve the active timeout while persisting exceptions"},
+            {"ToggleNeverSleepSiteForTab", "tab context actions must expose per-site automatic-sleep exceptions"},
+            {"SleepAfter1m", "Performance menu must retain the 1-minute timeout command"},
+            {"SleepAfter5m", "Performance menu must retain the 5-minute timeout command"},
+            {"SleepAfter15m", "Performance menu must retain the 15-minute timeout command"},
+            {"SleepAfter30m", "Performance menu must retain the 30-minute timeout command"},
+            {"SleepNever", "Performance menu must retain the Never timeout command"},
+            {"timeout == SleepTimeout::OneMinute ? MemoryMode::Saver : MemoryMode::Balanced", "only the one-minute setting may opt into the aggressive Memory Saver target"}
+        }}) {
+            ++checks;
+            if (app_source.find(token) == std::string::npos)
+                findings.push_back({"src/app.cpp", 0, std::string(message)});
+        }
+    }
+
+    const auto extension_ui_source = ReadAll(root / "src" / "native_ui.inl");
+    if (!extension_ui_source.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,8>{{
+            {"L\"Search extensions\"", "Extensions v2 must expose native search"},
+            {"ExtensionsFilterEnabled", "Extensions v2 must render the Enabled filter chip"},
+            {"ExtensionsFilterDisabled", "Extensions v2 must render the Disabled filter chip"},
+            {"ExtensionsFilterAttention", "Extensions v2 must render the Needs-attention filter chip"},
+            {"ExtensionMatchesText", "Extensions v2 must filter installed and saved-source rows by search text"},
+            {"does not claim Chrome Web Store compatibility", "Extensions UI must keep the WebView2/Chrome Web Store compatibility boundary explicit"},
+            {"ClearAdBlockerSiteExceptions", "Extensions must expose cleanup for saved bundled-blocker site exceptions"},
+            {"ad_blocker_site_exceptions_.size()", "Extensions must show the bundled blocker's saved site-exception count"}
+        }}) {
+            ++checks;
+            if (extension_ui_source.find(token) == std::string::npos)
+                findings.push_back({"src/native_ui.inl", 0, std::string(message)});
+        }
+    }
+
+    const auto blocker_manifest = ReadAll(root / "extensions" / "webcom-ad-blocker" / "manifest.json");
+    const auto blocker_rules = ReadAll(root / "extensions" / "webcom-ad-blocker" / "network-rules.json");
+    const auto blocker_css = ReadAll(root / "extensions" / "webcom-ad-blocker" / "web-ads.css");
+    const auto blocker_youtube_css = ReadAll(root / "extensions" / "webcom-ad-blocker" / "youtube.css");
+    const auto blocker_youtube_js = ReadAll(root / "extensions" / "webcom-ad-blocker" / "youtube-player.js");
+    ++checks;
+    if (blocker_manifest.find("site-config.js") == std::string::npos || blocker_manifest.find("youtube-player.js") == std::string::npos ||
+        blocker_manifest.find("site-config.js") > blocker_manifest.find("youtube-player.js"))
+        findings.push_back({"extensions/webcom-ad-blocker/manifest.json", 0, "Ad Blocker v2 must load the synchronous site config before YouTube filtering helpers"});
+    ++checks;
+    if (blocker_rules.find("\"excludedInitiatorDomains\": [\"webcom.invalid\"]") == std::string::npos)
+        findings.push_back({"extensions/webcom-ad-blocker/network-rules.json", 0, "bundled DNR rules must expose a valid reserved initiator sentinel for profile-specific rendering"});
+    ++checks;
+    if (blocker_css.find("data-webcom-adblock-off") == std::string::npos || blocker_youtube_css.find("data-webcom-adblock-off") == std::string::npos)
+        findings.push_back({"extensions/webcom-ad-blocker", 0, "cosmetic filtering must honor the same per-site pause marker"});
+    ++checks;
+    if (blocker_youtube_js.find("window.__webcomAdBlockerDisabled === true") == std::string::npos)
+        findings.push_back({"extensions/webcom-ad-blocker/youtube-player.js", 0, "YouTube filtering must exit immediately on a paused site"});
+
+    const auto welcome_ui_source = ReadAll(root / "src" / "native_ui.inl");
+    if (!welcome_ui_source.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,6>{{
+            {"BuildOnboardingProgress", "Welcome page must render live setup progress"},
+            {"L\"Default browser\"", "Welcome checklist must expose default-browser setup"},
+            {"ImportBookmarks", "Welcome checklist must link to bookmark import"},
+            {"WorkspaceMenu", "Welcome checklist must link to workspace setup"},
+            {"UpdatesPage", "Welcome checklist must link to update choices"},
+            {"never silently changes Windows defaults", "Welcome page must keep Windows default-app consent explicit"}
+        }}) {
+            ++checks;
+            if (welcome_ui_source.find(token) == std::string::npos)
+                findings.push_back({"src/native_ui.inl", 0, std::string(message)});
+        }
+    }
+
+    const auto native_ui_source = ReadAll(root / "src" / "native_ui.inl");
+    ++checks;
+    if (native_ui_source.find("SleepTimeoutSettingsDetail(sleep_timeout_)") == std::string::npos ||
+        native_ui_source.find("Never sleep site") == std::string::npos ||
+        native_ui_source.find("PerformanceMenu") == std::string::npos)
+        findings.push_back({"src/native_ui.inl", 0, "Settings must expose the Performance timeout menu and Never sleep site count"});
+
+    ++checks;
+    if (native_ui_source.find("L\"Retry failed\", RetryFailedDownloads") == std::string::npos ||
+        native_ui_source.find("OpenDownloadSourceBase + static_cast<UINT>(i)") == std::string::npos)
+        findings.push_back({"src/native_ui.inl", 0, "Downloads v2 must expose bounded bulk retry and per-entry source actions"});
+
     const auto memory_script = ReadAll(root / "scripts" / "Measure-WebComMemory.ps1");
     if (!memory_script.empty()) {
-        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,4>{{
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,10>{{
             {"PrivateCommitBudgetMiB", "memory QA must support an explicit private-commit budget"},
             {"FailOnBudgetExceeded", "memory QA must support a CI-style regression gate"},
             {"WebViewPrivateCommitMiB", "memory QA must separate host and WebView2 totals"},
-            {"No command lines, page titles, URLs, credentials, or browsing data are collected", "memory QA must disclose its privacy boundary"}
+            {"No command lines, page titles, URLs, credentials, or browsing data are collected", "memory QA must disclose its privacy boundary"},
+            {"'one-tab'", "memory acceptance script must retain the one-tab scenario label"},
+            {"'multi-profile'", "memory acceptance script must retain the multi-profile scenario label"},
+            {"[string]$JsonPath", "memory acceptance script must support a machine-readable JSON artifact"},
+            {"webcom-memory-report-v1", "memory acceptance JSON must use an explicit schema identifier"},
+            {"Select-Object * -ExcludeProperty Records", "memory acceptance JSON/CSV must exclude per-process record details from summary samples"},
+            {"Win32_Process -Property @('ProcessId', 'ParentProcessId', 'Name', 'CreationDate')", "memory sampling must not read process command lines or browsing arguments"}
         }}) {
             ++checks;
             if (memory_script.find(token) == std::string::npos) findings.push_back({"scripts/Measure-WebComMemory.ps1", 0, std::string(message)});
         }
     }
 
+    const auto acceptance_script = ReadAll(root / "scripts" / "Test-WindowsAcceptance.ps1");
+    if (!acceptance_script.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,15>{{
+            {"webcom-windows-acceptance-v1", "Windows acceptance must emit a versioned machine-readable summary"},
+            {"AllowCompilerWarnings", "Windows acceptance must fail project MSVC warnings by default with an explicit override"},
+            {"WebCom-ui-tests.exe", "Windows acceptance must replay the packaged native UI harness"},
+            {"WEBCOM_QA_MODE", "Windows acceptance must use the gated isolated QA launch path"},
+            {"WebCom-Acceptance-", "Windows acceptance data roots must use the reserved temp-folder prefix"},
+            {"msedgewebview2.exe", "Windows acceptance must require an observed WebView2 runtime process"},
+            {"ProductVersion", "Windows acceptance must verify packaged ProductVersion"},
+            {"FileVersion", "Windows acceptance must verify packaged FileVersion"},
+            {"manifest_version", "Windows acceptance must verify the packaged blocker manifest"},
+            {"Measure-WebComMemory.ps1", "Windows acceptance must optionally integrate the one-tab memory gate"},
+            {"compilerWarningCount", "Windows acceptance summary must record the MSVC warning count"},
+            {"build-last.log", "Windows acceptance must preserve the exact Windows build log"},
+            {"repositoryPattern", "Windows acceptance warning policy must scope MSVC warning failures to repository sources"},
+            {"$buildArgs += '-AllowCompilerWarnings'", "Windows acceptance diagnostic warning override must be forwarded to build.cmd"},
+            {"$compilerWarnings.Count -gt 0 -and -not $AllowCompilerWarnings", "Windows acceptance must keep its post-build repository-warning gate even with native /WX"}
+        }}) {
+            ++checks;
+            if (acceptance_script.find(token) == std::string::npos)
+                findings.push_back({"scripts/Test-WindowsAcceptance.ps1", 0, std::string(message)});
+        }
+    }
+
+    const auto main_source = ReadAll(root / "src" / "main.cpp");
+    if (!main_source.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,6>{{
+            {"WEBCOM_QA_MODE", "QA data-root launch must remain environment-gated"},
+            {"--qa-data-root", "native Windows acceptance must retain the isolated data-root switch"},
+            {"IsAcceptanceDataRootAllowed", "QA launch must validate the isolated data root before use"},
+            {"WebCom.Windows.Acceptance.v01", "QA launch must use a lock isolated from normal WebCom sessions"},
+            {"std::make_unique<webcom::BrowserApp>(instance, qa_data_root)", "QA launch must construct the browser with the isolated root"},
+            {"if (!qa_mode) MessageBoxW", "QA startup failures must avoid modal dialogs that can hang automation"}
+        }}) {
+            ++checks;
+            if (main_source.find(token) == std::string::npos) findings.push_back({"src/main.cpp", 0, std::string(message)});
+        }
+    }
+
+    const auto startup_source = ReadAll(root / "src" / "startup_model.cpp");
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,3>{{
+        {"IsAcceptanceDataRootAllowed", "acceptance-root validation must remain in the portable startup model"},
+        {"WebCom-Acceptance-", "acceptance-root validation must require the reserved leaf prefix"},
+        {"normalized_candidate.parent_path()", "acceptance-root validation must restrict launches to direct temp children"}
+    }}) {
+        ++checks;
+        if (startup_source.find(token) == std::string::npos) findings.push_back({"src/startup_model.cpp", 0, std::string(message)});
+    }
+
     const auto manifest_script = ReadAll(root / "scripts" / "New-ReleaseManifest.ps1");
     const auto verify_script = ReadAll(root / "scripts" / "Verify-UpdatePackage.ps1");
     const auto matrix_script = ReadAll(root / "scripts" / "Test-ReleaseMatrix.ps1");
+    const auto fresh_install_script = ReadAll(root / "scripts" / "Test-FreshInstall.ps1");
+    const auto upgrade_install_script = ReadAll(root / "scripts" / "Test-UpgradeInstall.ps1");
+    const auto release_candidate_script = ReadAll(root / "scripts" / "Test-ReleaseCandidate.ps1");
+    const auto build_package_script = ReadAll(root / "scripts" / "Verify-BuildPackage.ps1");
+    const auto signed_installer_script = ReadAll(root / "scripts" / "Build-SignedInstaller.ps1");
     ++checks;
     if (manifest_script.find("stable channel cannot publish a prerelease version") == std::string::npos)
         findings.push_back({"scripts/New-ReleaseManifest.ps1", 0, "release manifest generation must reject Stable prerelease versions"});
@@ -448,9 +818,433 @@ int main(int argc, char** argv) {
     ++checks;
     if (matrix_script.find("Release-matrix policy passed") == std::string::npos || matrix_script.find("ExpectedPublisherSha256") == std::string::npos)
         findings.push_back({"scripts/Test-ReleaseMatrix.ps1", 0, "Stable/Beta release-matrix QA script is missing its signer/channel gate"});
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,2>{{
+        {"webcom-release-matrix-v2", "release-matrix QA must emit a versioned machine-readable report"},
+        {"OutputJson", "release-matrix QA must support a report path for Release Candidate aggregation"}
+    }}) {
+        ++checks;
+        if (matrix_script.find(token) == std::string::npos)
+            findings.push_back({"scripts/Test-ReleaseMatrix.ps1", 0, std::string(message)});
+    }
+
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,8>{{
+        {"webcom-fresh-install-v2", "fresh-install QA must emit a versioned report"},
+        {"ExpectedVersion", "fresh-install QA must verify the intended product version"},
+        {"ProductVersion", "fresh-install QA must verify installed ProductVersion"},
+        {"FileVersion", "fresh-install QA must verify installed FileVersion"},
+        {"WEBCOM_QA_MODE", "fresh-install QA must use the isolated runtime launch path"},
+        {"msedgewebview2.exe", "fresh-install QA must require an observed WebView2 runtime"},
+        {"registryCleanupVerified", "fresh-install QA must record uninstall registry cleanup"},
+        {"WebCom-Acceptance-FreshInstall-", "fresh-install QA must reserve an isolated temporary data root"}
+    }}) {
+        ++checks;
+        if (fresh_install_script.find(token) == std::string::npos)
+            findings.push_back({"scripts/Test-FreshInstall.ps1", 0, std::string(message)});
+    }
+
+    ++checks;
+    if (fresh_install_script.find("installedExecutableSha256") == std::string::npos)
+        findings.push_back({"scripts/Test-FreshInstall.ps1", 0, "fresh-install QA must record the exact installed WebCom.exe SHA-256 for signed-package identity binding"});
+
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,9>{{
+        {"webcom-upgrade-install-v1", "upgrade QA must emit a versioned machine-readable report"},
+        {"PreviousInstaller", "upgrade QA must require an explicit previous signed package"},
+        {"CurrentInstaller", "upgrade QA must require the current signed package"},
+        {"state.v1", "upgrade QA must verify persisted browser state across installer replacement"},
+        {"profileStatePreservedByInstaller", "upgrade QA must report installer-level profile preservation"},
+        {"Invoke-RuntimeSmoke", "upgrade QA must smoke-test both previous and current installed browsers"},
+        {"msedgewebview2.exe", "upgrade QA must observe the WebView2 runtime on both versions"},
+        {"registryCleanupVerified", "upgrade QA must record uninstall registration cleanup"},
+        {"byte-identical", "upgrade QA must reject a no-op identical installer pair"}
+    }}) {
+        ++checks;
+        if (upgrade_install_script.find(token) == std::string::npos)
+            findings.push_back({"scripts/Test-UpgradeInstall.ps1", 0, std::string(message)});
+    }
+
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,14>{{
+        {"webcom-release-candidate-v1", "Release Candidate gate must emit a versioned summary"},
+        {"Test-WindowsAcceptance.ps1", "Release Candidate gate must run clean Windows/MSVC/WebView2 acceptance"},
+        {"Test-ReleaseMatrix.ps1", "Release Candidate gate must verify signed channel manifests/packages"},
+        {"Test-FreshInstall.ps1", "Release Candidate gate must run signed fresh-install/runtime/uninstall QA"},
+        {"Test-UpgradeInstall.ps1", "Release Candidate gate must support previous-to-current upgrade QA"},
+        {"WorkingSetBudgetMiB = 300", "Release Candidate memory gate must retain the 300 MiB one-tab target"},
+        {"compilerWarningCount", "Release Candidate gate must fail any project MSVC warnings reported by Windows acceptance"},
+        {"registryCleanupVerified", "Release Candidate gate must require installer registry cleanup"},
+        {"profileStatePreservedByInstaller", "Release Candidate upgrade gate must require persisted state preservation"},
+        {"readyForPublicBeta", "Release Candidate summary must expose the final release readiness result"},
+        {"NoPreviousSignedBuild", "Release Candidate gate must require an explicit waiver when no previous signed release exists"},
+        {"signed-dist-verification.json", "Release Candidate gate must require the signed staged-package verification report"},
+        {"installedExecutableSha256", "Release Candidate gate must bind installed WebCom.exe to the signed staged executable hash"},
+        {"differs from the signed dist executable", "Release Candidate gate must fail installer/executable identity mismatches"}
+    }}) {
+        ++checks;
+        if (release_candidate_script.find(token) == std::string::npos)
+            findings.push_back({"scripts/Test-ReleaseCandidate.ps1", 0, std::string(message)});
+    }
+
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,17>{{
+        {"webcom-build-package-v1", "build-package verification must emit a versioned machine-readable report"},
+        {"Get-PeMachine", "build-package verification must inspect PE machine architecture instead of trusting filenames"},
+        {"0xAA64", "build-package verification must understand ARM64 PE machine values"},
+        {"0x8664", "build-package verification must understand x64 PE machine values"},
+        {"ProductVersion", "build-package verification must check Windows ProductVersion"},
+        {"FileVersion", "build-package verification must check Windows FileVersion"},
+        {"source-hashes.sha256", "build-package verification must validate the source integrity manifest"},
+        {"source file is not covered by docs/source-hashes.sha256", "source integrity verification must reject unmanifested source files"},
+        {"compiler/debug artifact leaked into package", "build-package verification must reject compiler/debug artifacts"},
+        {"manifest_version must be 3", "build-package verification must require the bundled Manifest V3 blocker"},
+        {"RequireTestsPassed", "build-package verification must support a release test-pass requirement"},
+        {"RequireUiTests", "build-package verification must support a native UI harness requirement"},
+        {"RequireReleaseReady", "build-package verification must support a stricter release-ready policy"},
+        {"Warnings as errors: ON", "release-ready verification must require native warnings-as-errors"},
+        {"Update stable manifest: https://", "release-ready verification must require a compiled HTTPS Stable manifest endpoint"},
+        {"compiled publisher pin does not match", "release-ready verification must bind compiled update trust to the expected publisher pin"},
+        {"RequireSignedExecutable", "post-sign verification must support Authenticode identity checks"}
+    }}) {
+        ++checks;
+        if (build_package_script.find(token) == std::string::npos)
+            findings.push_back({"scripts/Verify-BuildPackage.ps1", 0, std::string(message)});
+    }
+
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,5>{{
+        {"Verify-BuildPackage.ps1", "signed-installer creation must run the strict staged-package verifier"},
+        {"pre-sign package integrity verification", "signed-installer creation must fail package integrity before signing"},
+        {"post-sign package integrity verification", "signed-installer creation must reverify the package after executable signing"},
+        {"signed-dist-verification.json", "signed-installer creation must archive a post-sign package verification report"},
+        {"-RequireSignedExecutable", "post-sign package verification must require Authenticode identity"}
+    }}) {
+        ++checks;
+        if (signed_installer_script.find(token) == std::string::npos)
+            findings.push_back({"scripts/Build-SignedInstaller.ps1", 0, std::string(message)});
+    }
+
+    const auto cmake_source = ReadAll(root / "CMakeLists.txt");
+    ++checks;
+    if (cmake_source.find("webcom_performance_preferences_tests") == std::string::npos ||
+        cmake_source.find("src/performance_preferences.cpp") == std::string::npos)
+        findings.push_back({"CMakeLists.txt", 0, "Performance preferences must stay covered by portable tests and the native browser target"});
+    ++checks;
+    if (cmake_source.find("webcom_download_history_model_tests") == std::string::npos ||
+        cmake_source.find("src/download_history_model.cpp") == std::string::npos)
+        findings.push_back({"CMakeLists.txt", 0, "Downloads v2 retention/retry policy must stay covered by portable tests and the native browser target"});
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,4>{{
+        {"option(WEBCOM_WARNINGS_AS_ERRORS", "native warning-as-error policy must be an explicit CMake option"},
+        {"if(MSVC AND WEBCOM_WARNINGS_AS_ERRORS)", "native MSVC warning failures must be enabled by default but diagnostically switchable"},
+        {"$<$<COMPILE_LANGUAGE:CXX>:/WX>", "WebCom native targets must compile project warnings as errors by default"},
+        {"/external:anglebrackets;/external:W0", "third-party/system angle-bracket headers must not turn external warnings into WebCom /WX failures"}
+    }}) {
+        ++checks;
+        if (cmake_source.find(token) == std::string::npos) findings.push_back({"CMakeLists.txt", 0, std::string(message)});
+    }
+
+    const auto readme_source = ReadAll(root / "README.md");
+    const auto build_script = ReadAll(root / "scripts" / "Build.ps1");
+    ++checks;
+    if (build_script.find("Test-WindowsAcceptance.ps1") == std::string::npos)
+        findings.push_back({"scripts/Build.ps1", 0, "Windows packages must include the acceptance runner used for release sign-off"});
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,7>{{
+        {"[switch]$AllowCompilerWarnings", "normal Windows builds must expose an explicit diagnostic-only warning override"},
+        {"-DWEBCOM_WARNINGS_AS_ERRORS=$(if ($AllowCompilerWarnings) { 'OFF' } else { 'ON' })", "Build.ps1 must keep /WX enabled unless the diagnostic override is explicit"},
+        {"Diagnostic mode: WebCom native /WX is disabled", "warning override must visibly disclose that release warning policy is disabled"},
+        {"Do not use this switch for Release Candidate or public-release sign-off", "warning override must not be presented as release-safe"},
+        {"Verifying staged Windows package integrity", "Build.ps1 must verify the staged package before ZIP creation"},
+        {"Verify-BuildPackage.ps1", "Build.ps1 must use the strict package integrity verifier"},
+        {"PACKAGE-VERIFICATION.json", "Build.ps1 must archive package integrity evidence in the portable package"}
+    }}) {
+        ++checks;
+        if (build_script.find(token) == std::string::npos) findings.push_back({"scripts/Build.ps1", 0, std::string(message)});
+    }
+    const auto public_beta_script = ReadAll(root / "scripts" / "Build-PublicBeta.ps1");
+    ++checks;
+    if (public_beta_script.find("Test-ReleaseCandidate.ps1") == std::string::npos ||
+        public_beta_script.find("Do not publish yet") == std::string::npos)
+        findings.push_back({"scripts/Build-PublicBeta.ps1", 0, "signed release generation must explicitly defer publishing until the Release Candidate gate passes"});
+    ++checks;
+    if (public_beta_script.find("signed-dist-verification.json") == std::string::npos ||
+        public_beta_script.find("Build verification:") == std::string::npos)
+        findings.push_back({"scripts/Build-PublicBeta.ps1", 0, "public-beta release generation must retain and surface the signed staged-package verification report"});
+    const auto resource_script = ReadAll(root / "resources" / "webcom.rc");
+    const auto installer_script = ReadAll(root / "installer" / "WebCom.iss");
+    for (const auto& [text, token, file, message] : std::array<std::tuple<std::string_view,std::string_view,std::string_view,std::string_view>,7>{{
+        {cmake_source, "project(WebCom VERSION 3.0.0", "CMakeLists.txt", "current WebCom product version must remain 3.0.0"},
+        {app_source, "kWebComVersion = \"3.0.0\"", "src/app.cpp", "runtime product version must remain 3.0.0"},
+        {readme_source, "WebCom v3", "README.md", "public README must identify the current product generation as WebCom v3"},
+        {readme_source, "machine-readable semantic versioning uses **3.0.0**", "README.md", "README must document v3/3.0.0 versioning policy"},
+        {build_script, "WebCom-v3-Windows-", "scripts/Build.ps1", "portable package names must identify WebCom v3"},
+        {resource_script, "VALUE \"ProductVersion\", \"3.0.0", "resources/webcom.rc", "Windows version resources must identify WebCom 3.0.0"},
+        {installer_script, "#define AppVersion \"3.0.0\"", "installer/WebCom.iss", "installer default product version must identify WebCom 3.0.0"}
+    }}) {
+        ++checks;
+        if (text.find(token) == std::string::npos) findings.push_back({std::string(file), 0, std::string(message)});
+    }
+
+    const auto core_source = ReadAll(root / "src" / "core.cpp");
+    if (!core_source.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,8>{{
+            {"SleepTimeout::OneMinute:return 60'000", "portable sleep model must preserve the 1-minute threshold"},
+            {"SleepTimeout::FifteenMinutes:return 900'000", "portable sleep model must preserve the 15-minute threshold"},
+            {"SleepTimeout::ThirtyMinutes:return 1'800'000", "portable sleep model must preserve the 30-minute threshold"},
+            {"SleepTimeout::Never:return std::numeric_limits<std::uint64_t>::max()", "portable sleep model must represent Never without a finite timeout"},
+            {"if(timeout==SleepTimeout::Never)return false", "Never must fail closed before elapsed-time arithmetic"},
+            {"PerformanceTickIntervalMs(SleepTimeout timeout)", "adaptive performance polling must live in the portable core model"},
+            {"case SleepTimeout::FiveMinutes:return 30'000", "balanced five-minute sleeping should reduce idle polling to 30 seconds"},
+            {"case SleepTimeout::Never:return 0", "Never-sleep mode must disable automatic performance polling"}
+        }}) {
+            ++checks;
+            if (core_source.find(token) == std::string::npos)
+                findings.push_back({"src/core.cpp", 0, std::string(message)});
+        }
+    }
+
+    const auto performance_preferences = ReadAll(root / "src" / "performance_preferences.cpp");
+    if (!performance_preferences.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,12>{{
+            {R"(WEBCOM_PERFORMANCE\t1)", "Performance preferences must use an explicit versioned local format"},
+            {"IsValidProfileName(profile)", "Performance preferences must reuse the hardened profile-name policy"},
+            {"AtomicWrite", "Performance preferences must persist atomically"},
+            {"MoveFileExW", "Windows Performance preference replacement must be atomic and write-through"},
+            {"0600", "POSIX Performance preference temporary files must stay owner-only"},
+            {"SleepTimeout::ThirtyMinutes", "Performance preferences must preserve the 30-minute option"},
+            {"SleepTimeout::Never", "Performance preferences must preserve the Never option"},
+            {"kMaxNeverSleepHosts", "Never sleep site preferences must retain a hard upper bound"},
+            {"NormalizeHostInternal", "Never sleep site persistence must normalize and validate host-only values"},
+            {R"(line.starts_with("never\t"))", "Performance preference loading must preserve Never sleep site records"},
+            {R"(content += "never\t" + host)", "Performance preference serialization must preserve Never sleep site records"},
+            {"std::find(emitted.begin(), emitted.end(), host)", "Never sleep site serialization must deduplicate normalized hosts"}
+        }}) {
+            ++checks;
+            if (performance_preferences.find(token) == std::string::npos)
+                findings.push_back({"src/performance_preferences.cpp", 0, std::string(message)});
+        }
+    }
+
+    const auto download_history_model = ReadAll(root / "src" / "download_history_model.cpp");
+    if (!download_history_model.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,5>{{
+            {"record.state != DownloadHistoryState::Completed", "automatic download-history cleanup must never remove failed or active records"},
+            {"now_ms - record.started_ms <= retention_ms", "completed download-history retention must use bounded elapsed-time logic"},
+            {"maximum = std::min<std::size_t>(maximum, 8)", "bulk failed-download retry must retain a hard upper bound"},
+            {"record.state == DownloadHistoryState::Interrupted", "bulk retry candidates must be failed/interrupted records"},
+            {"!record.paused && record.has_source", "bulk retry must exclude paused records and records without a source"}
+        }}) {
+            ++checks;
+            if (download_history_model.find(token) == std::string::npos)
+                findings.push_back({"src/download_history_model.cpp", 0, std::string(message)});
+        }
+    }
+
+    const auto tab_batch_model = ReadAll(root / "src" / "tab_batch_model.cpp");
+    if (!tab_batch_model.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,5>{{
+            {"DuplicateTabCloseCandidates", "duplicate-tab cleanup must use the portable bounded selection policy"},
+            {"item.workspace != workspace", "duplicate-tab cleanup must stay workspace-scoped"},
+            {"item.active || item.pinned || item.has_download", "duplicate-tab cleanup must protect active, pinned and downloading tabs"},
+            {"item.private_mode", "duplicate matching must keep private and normal tabs distinct"},
+            {"return item.url +", "duplicate matching must preserve URL path/query case"}
+        }}) {
+            ++checks;
+            if (tab_batch_model.find(token) == std::string::npos) findings.push_back({"src/tab_batch_model.cpp", 0, std::string(message)});
+        }
+    }
+
+    const auto home_model = ReadAll(root / "src" / "home_model.cpp");
+    if (!home_model.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,4>{{
+            {"BuildHomeRecentSites", "native New Tab recent sites must use the bounded portable model"},
+            {"std::unordered_set<std::wstring> seen", "recent sites must deduplicate repeated hosts"},
+            {"maximum = std::min<std::size_t>(maximum, 12)", "recent-site model must keep a hard upper bound"},
+            {"HomeDisplayHost", "recent-site cards must derive a display host without exposing full URLs"}
+        }}) {
+            ++checks;
+            if (home_model.find(token) == std::string::npos) findings.push_back({"src/home_model.cpp", 0, std::string(message)});
+        }
+    }
+
+    const auto home_preferences = ReadAll(root / "src" / "home_preferences.cpp");
+    if (!home_preferences.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,6>{{
+            {"kMaxHomeShortcuts", "custom New Tab shortcuts must retain a hard upper bound"},
+            {"WEBCOM_HOME_PREFERENCES", "New Tab preferences must use an explicit versioned local format"},
+            {"AtomicWrite", "New Tab preferences must persist atomically"},
+            {"ResolveAddress", "custom shortcut persistence must validate browser-safe addresses"},
+            {"kMaxHiddenRecentHosts", "hidden recent-site preferences must stay bounded"},
+            {"IsHomeRecentHostHidden", "recent-site hiding must remain a non-destructive preference rather than deleting history"}
+        }}) {
+            ++checks;
+            if (home_preferences.find(token) == std::string::npos) findings.push_back({"src/home_preferences.cpp", 0, std::string(message)});
+        }
+    }
+
+    if (!app_source.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,3>{{
+            {"value == L\"webcom:passwords\"", "webcom:passwords must remain routable as a native internal page"},
+            {"case InternalPage::Passwords: return L\"Passwords & Autofill\"", "password manager internal page must retain its user-facing title"},
+            {"case PasswordMenu: OpenInternalPage(L\"webcom:passwords\")", "Password settings entry must open the native manager page"}
+        }}) {
+            ++checks;
+            if (app_source.find(token) == std::string::npos) findings.push_back({"src/app.cpp", 0, std::string(message)});
+        }
+    }
+
+    const auto history_model_source = ReadAll(root / "src" / "history_model.cpp");
+    if (!history_model_source.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,4>{{
+            {"HistoryHost", "History v2 must retain a normalized host extractor"},
+            {"BuildHistoryHostSummaries", "History v2 must retain bounded top-site aggregation"},
+            {"maximum = std::min<std::size_t>(maximum, 16)", "History top-site aggregation must stay bounded"},
+            {"DeleteHistoryHost", "History v2 must retain whole-site cleanup without touching other sites"}
+        }}) {
+            ++checks;
+            if (history_model_source.find(token) == std::string::npos) findings.push_back({"src/history_model.cpp", 0, std::string(message)});
+        }
+    }
+
+    const auto memory_model_source = ReadAll(root / "src" / "memory_snapshot_model.cpp");
+    if (!memory_model_source.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,6>{{
+            {"Total working set", "memory snapshot must report total working set"},
+            {"WebCom host:", "memory snapshot must split host memory from WebView2"},
+            {"WebView2 group:", "memory snapshot must report WebView2 process-group memory"},
+            {"PARTIAL RESULT", "memory snapshot must fail visibly when the runtime process list is unavailable"},
+            {"Automatic sleep:", "memory snapshot must include the active automatic-sleep policy"},
+            {"Never-sleep sites:", "memory snapshot must include the per-profile never-sleep exception count"}
+        }}) {
+            ++checks;
+            if (memory_model_source.find(token) == std::string::npos) findings.push_back({"src/memory_snapshot_model.cpp", 0, std::string(message)});
+        }
+    }
+    if (!app_source.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,5>{{
+            {"value == L\"webcom:about\"", "webcom:about must remain routable as a native internal page"},
+            {"case InternalPage::About: return L\"About WebCom\"", "About page must retain its native user-facing title"},
+            {"case About: OpenInternalPage(L\"webcom:about\")", "About command must open the native About page instead of a legacy message box"},
+            {"MemorySnapshot snapshot", "Windows memory collection must populate the portable memory snapshot model"},
+            {"BuildMemorySnapshotText(snapshot)", "Windows memory report must format through the tested portable model"}
+        }}) {
+            ++checks;
+            if (app_source.find(token) == std::string::npos) findings.push_back({"src/app.cpp", 0, std::string(message)});
+        }
+    }
+
+    const auto password_ui_source = ReadAll(root / "src" / "native_ui.inl");
+    if (!password_ui_source.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,5>{{
+            {"InternalPage::Passwords", "Passwords & Autofill must remain a first-class native internal page"},
+            {"Credential values stay in the WebView2 profile store", "credential manager must disclose WebView2 ownership of saved values"},
+            {"Clear saved passwords...", "credential manager must expose confirmation-gated password clearing"},
+            {"Clear autofill form data...", "credential manager must expose confirmation-gated autofill clearing"},
+            {"WebCom does not read, list, export, or display saved password values", "credential manager must not imply password enumeration/decryption support"}
+        }}) {
+            ++checks;
+            if (password_ui_source.find(token) == std::string::npos) findings.push_back({"src/native_ui.inl", 0, std::string(message)});
+        }
+    }
+
+    const auto failure_ui_source = ReadAll(root / "src" / "native_ui.inl");
+    if (!failure_ui_source.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,5>{{
+            {"L\"This page couldn’t be opened\"", "failed tabs must retain a clear native recovery heading"},
+            {"Reload,L\"Try again\"", "failed tabs must expose a native retry action"},
+            {"FocusAddress,L\"Edit address\"", "failed tabs must expose a native address-edit recovery action"},
+            {"NewTab,L\"New Tab\"", "failed tabs must expose a native escape-to-new-tab action"},
+            {"a broken site cannot replace the browser recovery controls", "failed-page copy must retain the native browser-control trust boundary"}
+        }}) {
+            ++checks;
+            if (failure_ui_source.find(token) == std::string::npos) findings.push_back({"src/native_ui.inl", 0, std::string(message)});
+        }
+    }
+
+    if (!app_source.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,4>{{
+            {"for(auto& item:tabs_)if(IsSplitVisible(*item))SetVisible(*item,true);", "tab handoff must reveal destination WebView controllers before hiding outgoing controllers"},
+            {"ChromeTabSelectionDuration(changed,ReducedMotionActive())", "tab selection animation must honor effective profile/Windows reduced motion and skip same-tab transitions"},
+            {"ChromeShouldAnimateReflow(!reflow_origins.empty(),ReducedMotionActive())", "tab reflow animation must be gated by geometry changes and effective reduced motion"},
+            {"RDW_INVALIDATE|RDW_NOERASE|RDW_UPDATENOW", "omnibox suggestion reveal must paint its owner-drawn buffer at final bounds without an intermediate erase"}
+        }}) {
+            ++checks;
+            if (app_source.find(token) == std::string::npos) findings.push_back({"src/app.cpp", 0, std::string(message)});
+        }
+    }
+
+    const auto dark_menu_source = ReadAll(root / "src" / "dark_menu.cpp");
+    const auto dark_menu_header = ReadAll(root / "src" / "dark_menu.h");
+    if (!dark_menu_source.empty() && !dark_menu_header.empty()) {
+        ++checks;
+        if (dark_menu_header.find("const Palette* palette = nullptr, bool reduce_motion = false") == std::string::npos)
+            findings.push_back({"src/dark_menu.h", 0, "native menu API must expose a reduced-motion switch without breaking existing callers"});
+        ++checks;
+        if (dark_menu_source.find("const bool allow_animation = !reduce_motion && system_animate && !GetSystemMetrics(SM_REMOTESESSION);") == std::string::npos)
+            findings.push_back({"src/dark_menu.cpp", 0, "dark menu blend animation must honor WebCom reduced motion and Windows animation policy"});
+        ++checks;
+        if (dark_menu_source.find("case WM_SETTINGCHANGE: case WM_THEMECHANGED: case WM_SYSCOLORCHANGE:") == std::string::npos)
+            findings.push_back({"src/dark_menu.cpp", 0, "native dark menus must dismiss when Windows accessibility/theme metrics change"});
+    }
 
     const auto native_ui = ReadAll(root / "src" / "native_ui.inl");
     if (!native_ui.empty()) {
+        ++checks;
+        if (native_ui.find("Create chrome controls hidden. Layout() positions them before first reveal") == std::string::npos)
+            findings.push_back({"src/native_ui.inl", 0, "startup chrome controls must stay hidden until their first final layout"});
+        ++checks;
+        if (native_ui.find("WS_CHILD | WS_VISIBLE | WS_TABSTOP | SS_NOTIFY") != std::string::npos ||
+            native_ui.find("WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL") != std::string::npos)
+            findings.push_back({"src/native_ui.inl", 0, "tab strip/address edit must not be created visible at the 1x1 client origin"});
+        ++checks;
+        if (native_ui.find("EnsureInternalPageData(page);") == std::string::npos)
+            findings.push_back({"src/native_ui.inl", 0, "native internal pages must request their lazy datasets before rendering"});
+        ++checks;
+        if (native_ui.find("!downloads_loaded_ || !download_entries_.empty()") == std::string::npos)
+            findings.push_back({"src/native_ui.inl", 0, "lazy download history must not remove the downloads affordance before first use"});
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,11>{{
+            {"L\"Your shortcuts\"", "New Tab must expose user-managed shortcut tiles"},
+            {"HomeShortcutBase+static_cast<UINT>(i)", "custom shortcut cards must route through bounded shortcut commands"},
+            {"HomeShortcutRemoveBase+static_cast<UINT>(i)", "custom shortcut cards must expose a native remove affordance"},
+            {"L\"Recent\"", "New Tab must expose a Recent section"},
+            {"VisibleHomeRecentSites", "New Tab Recent cards must respect hidden-host preferences"},
+            {"HomeRecentPinBase+static_cast<UINT>(i)", "recent-site cards must expose a pin-to-shortcuts action"},
+            {"HomeRecentHideBase+static_cast<UINT>(i)", "recent-site cards must expose a non-destructive hide action"},
+            {"L\"Workspaces\"", "New Tab must expose workspace cards"},
+            {"WorkspaceBase+static_cast<UINT>(index)", "workspace cards must route through the existing workspace switch commands"},
+            {"{L\"History\",History},{L\"Downloads\",Downloads},{L\"Bookmarks\",BookmarkManager},{L\"Sessions\",SessionsManager}", "New Tab quick actions must retain core browser destinations"},
+            {"add_home_action", "New Tab cards must use native hit targets rather than another renderer"}
+        }}) {
+            ++checks;
+            if (native_ui.find(token) == std::string::npos) findings.push_back({"src/native_ui.inl", 0, std::string(message)});
+        }
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,5>{{
+            {"L\"Top sites\"", "History v2 must expose top-site chips"},
+            {"HistoryHostFilterBase+static_cast<UINT>(i)", "History top-site chips must route through bounded filter commands"},
+            {"DeleteHistoryHostBase+static_cast<UINT>(i)", "History top-site chips must expose whole-site cleanup"},
+            {"HistoryDateLabel(item.started_ms)", "Downloads must group rows by local date"},
+            {"std::wstring download_group", "Downloads date grouping must avoid repeating the same date header"}
+        }}) {
+            ++checks;
+            if (native_ui.find(token) == std::string::npos) findings.push_back({"src/native_ui.inl", 0, std::string(message)});
+        }
+        ++checks;
+        if (native_ui.find("add(CloseDuplicateTabs,L\"Close duplicate tabs\"") == std::string::npos ||
+            native_ui.find("add(SleepOtherTabs,L\"Sleep other tabs\"") == std::string::npos)
+            findings.push_back({"src/native_ui.inl", 0, "Quick Commands must expose workspace-safe duplicate cleanup and sleep-other-tabs actions"});
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,4>{{
+            {"internal_page==InternalPage::Privacy", "Privacy Manager must remain a searchable native page"},
+            {"L\"Search cookies and permissions\"", "Privacy Manager search must label its cookie/permission scope"},
+            {"const std::wstring privacy_summary", "Privacy Manager must retain its bounded profile summary counts"},
+            {"visible_permission_rows", "Privacy Manager permission filtering must use compact filtered row indexing"}
+        }}) {
+            ++checks;
+            if (native_ui.find(token) == std::string::npos) findings.push_back({"src/native_ui.inl", 0, std::string(message)});
+        }
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,5>{{
+            {"InternalPage::About", "About WebCom must remain a first-class native internal page"},
+            {"L\"WebCom version\"", "About page must show the browser version"},
+            {"L\"WebView2 Runtime\"", "About page must show the installed WebView2 runtime version"},
+            {"L\"Performance snapshot\"", "About page must link to the runtime memory snapshot"},
+            {"L\"Compatibility and privacy\"", "About page must disclose the WebView2 compatibility/privacy boundary"}
+        }}) {
+            ++checks;
+            if (native_ui.find(token) == std::string::npos) findings.push_back({"src/native_ui.inl", 0, std::string(message)});
+        }
         static const std::regex internal_decl(R"((?:const\s+)?(?:auto|InternalPage)\s+internal_page\s*=)");
         const auto count = static_cast<std::size_t>(std::distance(
             std::sregex_iterator(native_ui.begin(), native_ui.end(), internal_decl), std::sregex_iterator()));
@@ -458,7 +1252,84 @@ int main(int argc, char** argv) {
         if (count > 1) findings.push_back({"src/native_ui.inl", 0, "internal_page is declared more than once; this previously caused an MSVC redefinition failure"});
     }
 
+    const auto recently_closed_source = ReadAll(root / "src" / "recently_closed_model.cpp");
+    if (!recently_closed_source.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,6>{{
+            {"WEBCOM_RECENTLY_CLOSED", "recently-closed recovery must use an explicit versioned profile-local format"},
+            {"kMaxRecentlyClosedEntries", "recently-closed recovery must retain a hard entry bound"},
+            {"ResolveAddress", "recently-closed recovery must validate addresses through WebCom's normal resolver"},
+            {"AtomicWrite", "recently-closed recovery must use atomic replacement"},
+            {"0600", "portable recently-closed temporary files must be owner-only on POSIX"},
+            {"MoveFileExW", "Windows recently-closed persistence must replace the flushed file atomically"}
+        }}) {
+            ++checks;
+            if (recently_closed_source.find(token) == std::string::npos)
+                findings.push_back({"src/recently_closed_model.cpp", 0, std::string(message)});
+        }
+    }
+
+    if (!app_source.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,12>{{
+            {"EnsureRecentlyClosedLoaded", "recently-closed recovery must be lazy-loaded before read/write use"},
+            {"SaveRecentlyClosedNow", "recently-closed recovery must persist after mutations"},
+            {"ReopenClosedAt", "History and Ctrl+Shift+T must share a bounded restore path"},
+            {"tab->activity.protected_from_sleep = saved.keep_awake", "reopened tabs must restore keep-awake state"},
+            {"tab->activity.pinned = saved.pinned", "reopened tabs must restore pinned state"},
+            {"value == L\"webcom:feedback\"", "Report a Problem must remain a native internal page"},
+            {"CopyProblemTemplateNow", "Report a Problem must expose a privacy-safe copyable template"},
+            {"NoteAction", "actionable browser-owned notifications must retain a dedicated path"},
+            {"OpenToastDownload", "download completion notification must be able to reopen the completed file"},
+            {"available. Click to review.", "available updates must expose an actionable browser-owned notification"},
+            {"app->history_entries_.clear()", "full browsing-data cleanup must clear WebCom-owned history after WebView2 succeeds"},
+            {"app->closed_tabs_.clear()", "full browsing-data cleanup must clear recently-closed recovery after WebView2 succeeds"}
+        }}) {
+            ++checks;
+            if (app_source.find(token) == std::string::npos)
+                findings.push_back({"src/app.cpp", 0, std::string(message)});
+        }
+    }
+
+    if (!native_ui.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,8>{{
+            {"L\"Recently closed\"", "History must expose persistent recently-closed recovery"},
+            {"ReopenClosedBase+static_cast<UINT>(i)", "recently-closed rows must use a bounded restore command range"},
+            {"L\"Clear recovered\"", "History must expose explicit recently-closed cleanup"},
+            {"InternalPage::Feedback", "Report a Problem must render as a first-class native page"},
+            {"L\"Copy report template\"", "Report a Problem must expose the privacy-safe template action"},
+            {"WebCom never uploads them automatically", "Report a Problem must disclose the no-automatic-upload boundary"},
+            {"L\"Ad blocker protection\"", "Privacy Manager must expose honest blocker protection state"},
+            {"L\"Clear paused sites\"", "Privacy Manager must expose cleanup for blocker site exceptions"}
+        }}) {
+            ++checks;
+            if (native_ui.find(token) == std::string::npos)
+                findings.push_back({"src/native_ui.inl", 0, std::string(message)});
+        }
+    }
+
     checks += files.size();
+
+    const auto accessibility_model = ReadAll(root / "src" / "accessibility_model.cpp");
+    const auto accessibility_tests = ReadAll(root / "tests" / "accessibility_model_tests.cpp");
+    const auto native_accessibility_model = ReadAll(root / "src" / "native_accessibility_model.cpp");
+    const auto native_accessibility_tests = ReadAll(root / "tests" / "native_accessibility_model_tests.cpp");
+    ++checks;
+    if (accessibility_model.find("inputs.profile_reduce_motion || !inputs.system_animations_enabled || inputs.remote_session") == std::string::npos)
+        findings.push_back({"src/accessibility_model.cpp", 0, "effective reduced motion must compose profile, Windows animation and Remote Desktop policy"});
+    ++checks;
+    if (accessibility_model.find("inputs.profile_high_contrast || inputs.system_high_contrast") == std::string::npos)
+        findings.push_back({"src/accessibility_model.cpp", 0, "effective high contrast must compose profile and Windows High Contrast policy"});
+    ++checks;
+    if (accessibility_tests.find("Windows animations-off forces reduced browser chrome motion") == std::string::npos)
+        findings.push_back({"tests/accessibility_model_tests.cpp", 0, "accessibility policy must have portable Windows-policy regression coverage"});
+
+    ++checks;
+    if (native_accessibility_model.find("NativeAccessibleActionIndex") == std::string::npos ||
+        native_accessibility_model.find("NativeAccessibleChildId") == std::string::npos)
+        findings.push_back({"src/native_accessibility_model.cpp", 0, "native accessibility virtual-child arithmetic must stay in the portable tested model"});
+    ++checks;
+    if (native_accessibility_tests.find("standard Win32 child IDs are not treated as virtual actions") == std::string::npos ||
+        native_accessibility_tests.find("forward navigation stops at the last action") == std::string::npos)
+        findings.push_back({"tests/native_accessibility_model_tests.cpp", 0, "native accessibility model must guard standard-child boundaries and navigation limits"});
     if (!findings.empty()) {
         std::cerr << "WebCom MSVC source preflight failed with " << findings.size() << " finding(s):\n";
         for (const auto& finding : findings) {

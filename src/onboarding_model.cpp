@@ -14,6 +14,20 @@ bool Fail(std::string* error, std::string value) {
 }
 }
 
+OnboardingProgress BuildOnboardingProgress(bool default_browser, std::size_t bookmark_count,
+                                           std::size_t workspace_count, bool update_checks_enabled) {
+    OnboardingProgress progress;
+    progress.default_browser = default_browser;
+    progress.bookmarks_ready = bookmark_count > 0;
+    progress.workspaces_ready = workspace_count > 1;
+    progress.updates_ready = update_checks_enabled;
+    progress.completed = static_cast<unsigned>(progress.default_browser) +
+                         static_cast<unsigned>(progress.bookmarks_ready) +
+                         static_cast<unsigned>(progress.workspaces_ready) +
+                         static_cast<unsigned>(progress.updates_ready);
+    return progress;
+}
+
 OnboardingState LoadOnboardingState(const std::filesystem::path& root) {
     std::ifstream input(root / "onboarding.v1", std::ios::binary);
     if (!input) return {};

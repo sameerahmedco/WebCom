@@ -101,3 +101,36 @@ test('clicks a visible skip button during ads only, including when YouTube reuse
   playerObserver.callback();
   assert.equal(clicks, 2);
 });
+
+test('site pause flag bypasses YouTube player mutation completely', () => {
+  const initial = { ...response };
+  const { observers } = loadPlayerScript({ window: { __webcomAdBlockerDisabled: true, ytInitialPlayerResponse: initial } });
+  assert.ok(initial.playerAds);
+  assert.ok(initial.adPlacements);
+  assert.ok(initial.adSlots);
+  assert.equal(observers.length, 0);
+});
+
+test('bundled manifest loads site config before filtering helpers', () => {
+  const manifest = JSON.parse(readFileSync(path.join(__dirname, '..', 'extensions', 'webcom-ad-blocker', 'manifest.json'), 'utf8'));
+  assert.equal(manifest.version, '0.2.0');
+  assert.deepEqual(manifest.content_scripts[0].js, ['site-config.js']);
+  assert.equal(manifest.content_scripts[0].world, 'MAIN');
+  const playerIndex = manifest.content_scripts.findIndex(entry => Array.isArray(entry.js) && entry.js.includes('youtube-player.js'));
+  assert.ok(playerIndex > 0);
+});
+
+test('all static network rules expose a profile-generated initiator exclusion slot', () => {
+  const rules = JSON.parse(readFileSync(path.join(__dirname, '..', 'extensions', 'webcom-ad-blocker', 'network-rules.json'), 'utf8'));
+  assert.ok(rules.length >= 5);
+  for (const rule of rules) assert.deepEqual(rule.condition.excludedInitiatorDomains, ['webcom.invalid']);
+});
+
+test('cosmetic rules are gated by the per-site pause marker', () => {
+  for (const name of ['web-ads.css', 'youtube.css']) {
+    const css = readFileSync(path.join(__dirname, '..', 'extensions', 'webcom-ad-blocker', name), 'utf8');
+    for (const line of css.split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith('display') && line !== '}')) {
+      assert.ok(line.startsWith('html:not([data-webcom-adblock-off]) '), `${name}: ${line}`);
+    }
+  }
+});

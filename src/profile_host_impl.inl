@@ -121,12 +121,16 @@ void BrowserApp::Session::FinalizeProfileDeletion(Impl* requester) {
     std::string lower=deleted;
     for(char& c:lower) if(c>='A' && c<='Z') c=static_cast<char>(c+('a'-'A'));
     std::error_code ec;
-    for(const auto& file:std::array<std::filesystem::path,8>{
+    for(const auto& file:std::array<std::filesystem::path,12>{
             root / "Appearance" / (lower+".v1"),
+            root / "AdBlocker" / (lower+".v1"),
             root / "Bookmarks" / (lower+".v1"),
             root / "BookmarkFolders" / (lower+".v1"),
+            root / "Home" / (lower+".v1"),
+            root / "Performance" / (lower+".v1"),
             root / "Permissions" / (lower+".v1"),
             root / "Sessions" / (lower+".v1"),
+            root / "Recovery" / (lower+".recently-closed.v1"),
             ExtensionSourcesPath(root,deleted),
             HistoryPathFor(root,deleted), DownloadsPathFor(root,deleted)}) {
         ec.clear(); std::filesystem::remove(file,ec);
@@ -411,6 +415,7 @@ void BrowserApp::Session::InvalidateEnvironment(std::uint64_t expected_generatio
         window->extension_toggle_pending_ = false;
         window->ad_blocker_waiters_.clear();
         window->ad_blocker_id_.clear();
+        window->ad_blocker_extension_.Reset();
         window->extension_profile_.Reset();
         window->extensions_.clear();
         window->extension_bootstrap_tab_id_ = 0;
@@ -429,10 +434,8 @@ void BrowserApp::Session::OnWindowDestroyed(Impl* window) {
 }
 
 BrowserApp::BrowserApp(HINSTANCE instance) : session_(std::make_shared<Session>(instance)) {}
-#ifdef WEBCOM_TEST_MODE
 BrowserApp::BrowserApp(HINSTANCE instance, const std::filesystem::path& isolated_data_root)
     : session_(std::make_shared<Session>(instance, isolated_data_root)) {}
-#endif
 BrowserApp::~BrowserApp() = default;
 bool BrowserApp::Create(int show_command, const std::wstring& initial_address, bool start_private,
                         const std::wstring& initial_profile) {

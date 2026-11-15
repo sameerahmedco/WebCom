@@ -13,9 +13,11 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -66,6 +68,31 @@ struct TemporaryDirectory {
         if (!path.empty()) { std::error_code error; std::filesystem::remove_all(path, error); }
     }
 };
+
+
+webcom::SavedTab SeedNewTab(std::string title) {
+    webcom::SavedTab tab;
+    tab.url = "webcom:newtab";
+    tab.title = std::move(title);
+    tab.workspace = "Main";
+    return tab;
+}
+
+webcom::SavedProfile SeedProfile(std::string name, std::initializer_list<const char*> titles) {
+    webcom::SavedProfile profile;
+    profile.name = std::move(name);
+    for (const char* title : titles) profile.tabs.push_back(SeedNewTab(title ? title : ""));
+    profile.active_tab = 0;
+    profile.save_passwords = true;
+    profile.general_autofill = true;
+    profile.workspaces = {{"Main", 0}};
+    profile.active_workspace = "Main";
+    profile.vertical_tabs = false;
+    profile.vertical_tabs_collapsed = false;
+    profile.startup_mode = webcom::StartupMode::Continue;
+    profile.startup_pages.clear();
+    return profile;
+}
 
 std::wstring WindowText(HWND window) {
     const int size = GetWindowTextLengthW(window);
@@ -286,9 +313,8 @@ int main() {
         DialogWatchdog dialog_watchdog;
         webcom::AppState seed;
         seed.profiles = {
-            {"Default", {{"webcom:newtab","Default one",false,false},{"webcom:newtab","Default two",false,false}},0,{},true,true,{{"Main",0}},"Main",false,false,webcom::StartupMode::Continue,{}},
-            {"Work", {{"webcom:newtab","Work one",false,false},{"webcom:newtab","Work two",false,false},
-                      {"webcom:newtab","Work three",false,false}},0,{},true,true,{{"Main",0}},"Main",false,false,webcom::StartupMode::Continue,{}}
+            SeedProfile("Default", {"Default one", "Default two"}),
+            SeedProfile("Work", {"Work one", "Work two", "Work three"})
         };
         Check(webcom::SaveState(temporary.path, seed), "seed isolated profile state");
         const webcom::Appearance default_appearance{webcom::BrowserTheme::Charcoal, 0xd8a573, false};

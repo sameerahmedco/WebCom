@@ -134,7 +134,7 @@ bool OpenGetRequest(std::string_view url, InternetHandle& session, InternetHandl
                     InternetHandle& request, std::string* error) {
     const auto parsed = ParseHttpsUrl(url, error);
     if (!parsed) return false;
-    session = InternetHandle(WinHttpOpen(L"WebCom/2.0.0 updater", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    session = InternetHandle(WinHttpOpen(L"WebCom/3.0.0 updater", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                          WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
     if (!session.value) return Fail(error, "WinHTTP session could not be created.");
     WinHttpSetTimeouts(session.value, 10000, 10000, 15000, 30000);

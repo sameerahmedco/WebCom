@@ -1,6 +1,8 @@
-# How to build and run WebCom v2
+# How to build and run WebCom v3
 
-This guide is for contributors and testers who want to build **WebCom v2** from source on Windows.
+This guide is for contributors and testers who want to build **WebCom v3** from source on Windows.
+
+> Build from the current **WebCom-Windows-v3** source folder. Do not reuse an older `WebCom-Windows-v2` or `WebCom-Windows-0.8.0` extraction/build directory; those older trees can reproduce compile errors that are already guarded/fixed in v3.
 
 WebCom is a **C++20 / Win32** application. It uses **Microsoft Edge WebView2** as the web-rendering engine and builds with the Microsoft Visual C++ toolchain.
 
@@ -61,7 +63,7 @@ A successful build produces:
 ```text
 dist\WebCom\WebCom.exe
 dist\WebCom\WebView2Loader.dll
-dist\WebCom-Windows-x64.zip
+dist\WebCom-v3-Windows-x64.zip
 ```
 
 Keep `WebView2Loader.dll` next to `WebCom.exe`.
@@ -93,6 +95,14 @@ To build without the optional native Windows UI regression harness:
 ```bat
 build.cmd -SkipUiTests
 ```
+
+Normal native Windows builds treat WebCom-owned MSVC warnings as errors. For diagnosis only, you can temporarily disable `/WX`:
+
+```bat
+build.cmd -AllowCompilerWarnings
+```
+
+Do **not** use that switch for Release Candidate or public-release sign-off. The normal Windows acceptance path requires a warning-clean WebCom build.
 
 To skip test execution completely while still compiling the targets:
 
@@ -203,10 +213,46 @@ Do not treat a successful compile as the only release check. At minimum, test:
 - update/rollback verification for signed release builds;
 - memory usage with the included measurement script.
 
-See `docs/PUBLIC-BETA-CHECKLIST.md` and `docs/VALIDATION.md` for the current release boundary.
+See `docs/PUBLIC-BETA-CHECKLIST.md`, `docs/VALIDATION.md`, and `docs/MEMORY-ACCEPTANCE.md` for the current release boundary and repeatable memory scenarios.
 
 ## 11. Release and installer tooling
 
 Normal developer builds intentionally leave release-update endpoints and the publisher pin blank.
 
 The repository also contains Windows-only scripts for signed installers, release manifests, package verification, update-channel testing, and fresh-install QA. These are intended for release maintainers rather than first-time contributors. Start with `BUILDING.md` after you have a normal local build working.
+
+## Final Windows acceptance gate
+
+For a release-candidate build, do not stop at `build.cmd`. From the fresh v3 source folder run:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WindowsAcceptance.ps1
+```
+
+To test the one-tab 300 MiB working-set target at the same time:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WindowsAcceptance.ps1 -MeasureMemory -WorkingSetBudgetMiB 300
+```
+
+The acceptance runner uses an isolated temporary WebCom profile and leaves normal browser data untouched. Full details are in `docs/WINDOWS-ACCEPTANCE.md`.
+
+## Release Candidate sign-off
+
+Building successfully is not final release approval. After creating the signed installer and matching release manifest, run the Windows Release Candidate gate from the source root:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ReleaseCandidate.ps1 `
+  -CurrentInstaller .\release\WebCom-Setup-3.0.0-x64.exe `
+  -StableManifest .\release\stable.v2.txt `
+  -ExpectedPublisherSha256 <64-hex-publisher-fingerprint> `
+  -PreviousInstaller <previous-signed-installer>
+```
+
+If no previous signed WebCom build has ever existed, use `-NoPreviousSignedBuild` instead of silently skipping upgrade QA. See `docs/RELEASE-CANDIDATE.md` for the complete gate and generated reports.
+## Package integrity gate
+
+A normal `build.cmd` now verifies the staged `dist\WebCom` package before creating the portable ZIP. For signed releases, `Build-SignedInstaller.ps1` performs the same integrity check before signing and again afterward, producing `signed-dist-verification.json`. Do not move or discard that report before `Test-ReleaseCandidate.ps1`; the RC gate uses it to prove the installer contains the exact signed `WebCom.exe` that passed staged-package verification.
+
+See `docs/BUILD-PACKAGE-INTEGRITY.md`.
+

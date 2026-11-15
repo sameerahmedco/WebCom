@@ -1,6 +1,8 @@
 (() => {
   'use strict';
 
+  if (window.__webcomAdBlockerDisabled === true) return;
+
   function removePlayerAds(response) {
     if (!response || typeof response !== 'object' || !Object.hasOwn(response, 'playabilityStatus')) {
       return response;

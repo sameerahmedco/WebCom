@@ -46,8 +46,10 @@ void BrowserApp::Impl::Controls() {
     // being repositioned. WebCom keeps control names for accessibility and uses
     // the dark menu/labels for discoverability instead of a separate topmost popup.
     tooltips_ = nullptr;
+    // Create chrome controls hidden. Layout() positions them before first reveal,
+    // avoiding a transient 1x1 child paint at the client origin during startup.
     tab_strip_ = CreateWindowExW(0, L"STATIC", L"Browser tabs. Use Ctrl+Tab to switch tabs.",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | SS_NOTIFY, 0, 0, 1, 1, window_,
+        WS_CHILD | WS_TABSTOP | SS_NOTIFY, 0, 0, 1, 1, window_,
         reinterpret_cast<HMENU>(TabStrip), instance_, nullptr);
     SetWindowSubclass(tab_strip_, TabProc, 1, reinterpret_cast<DWORD_PTR>(this));
     if (auto* accessible = new (std::nothrow) TabStripAccessible(this)) {
@@ -62,7 +64,7 @@ void BrowserApp::Impl::Controls() {
         {SiteInfo,L"Site information and permissions"}, {DownloadsQuick,L"Recent downloads"},
         {Profile,L"Profiles"}, {More,L"Customize and control WebCom"}, {BookmarksOverflow,L"More bookmarks"}})
         toolbar_.push_back(Button(id,label));
-    address_ = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+    address_ = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL,
         0,0,1,1,window_,reinterpret_cast<HMENU>(Address),instance_,nullptr);
     home_search_ = CreateWindowExW(0,L"EDIT",L"",WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL,
         0,0,1,1,window_,reinterpret_cast<HMENU>(HomeSearch),instance_,nullptr);
@@ -80,9 +82,18 @@ void BrowserApp::Impl::Controls() {
     }
     home_buttons_ = {Button(HomeGo,L"Search Google"),Button(Google,L"Google"),
         Button(YouTube,L"YouTube"),Button(GitHub,L"GitHub")};
-    toast_ = CreateWindowExW(0,L"STATIC",L"",WS_CHILD | SS_CENTER | SS_CENTERIMAGE,
-        0,0,1,1,window_,nullptr,instance_,nullptr);
+    toast_ = CreateWindowExW(0,L"STATIC",L"",WS_CHILD | SS_CENTER | SS_CENTERIMAGE | SS_NOTIFY,
+        0,0,1,1,window_,reinterpret_cast<HMENU>(ToastClick),instance_,nullptr);
     SendMessageW(toast_,WM_SETFONT,reinterpret_cast<WPARAM>(font_),TRUE);
+    IAccessible* base_client = nullptr;
+    if (SUCCEEDED(CreateStdAccessibleObject(window_, OBJID_CLIENT, IID_IAccessible,
+            reinterpret_cast<void**>(&base_client))) && base_client) {
+        if (auto* accessible = new (std::nothrow) NativeClientAccessible(this, base_client)) {
+            client_accessible_impl_ = accessible;
+            client_accessible_.Attach(accessible);
+        }
+        base_client->Release();
+    }
 }
 
 RECT BrowserApp::Impl::ContentBounds() const {
@@ -151,7 +162,7 @@ void BrowserApp::Impl::Layout() {
         place(MaximizeWindow,dip_width-92,0,46,40);
         place(CloseWindow,dip_width-46,0,46,40);
         const int profile_width=static_cast<int>(std::min<std::size_t>(140,48+profile_name_.size()*7));
-        const auto tools=MakeChromeToolbarLayout(dip_width,profile_width,native_home,!download_entries_.empty());
+        const auto tools=MakeChromeToolbarLayout(dip_width,profile_width,native_home,!downloads_loaded_ || !download_entries_.empty());
         place(Back,6,47,32,32);place(Forward,43,47,32,32,tools.show_forward);
         place(Reload,tools.show_forward?79:43,47,32,32);
         cache.omnibox=chrome?RECT{D(tools.omnibox_left),D(45),D(tools.omnibox_right),D(81)}:RECT{};
@@ -182,11 +193,14 @@ void BrowserApp::Impl::Layout() {
         place(BookmarksOverflow,dip_width-34,87,28,28,show_bookmarks_ && overflow);
         const RECT content=ContentBounds();
         const auto internal_page=tab?InternalPageFor(tab->url):InternalPage::None;
-        const bool searchable_native=tab && !tab->web && (internal_page==InternalPage::History || internal_page==InternalPage::Bookmarks || internal_page==InternalPage::Shortcuts);
+        const bool searchable_native=tab && !tab->web && (internal_page==InternalPage::History || internal_page==InternalPage::Bookmarks || internal_page==InternalPage::Shortcuts || internal_page==InternalPage::Privacy || internal_page==InternalPage::Extensions);
         if(searchable_native && native_filter_page_!=internal_page){
             native_filter_page_=internal_page; SetWindowTextW(native_filter_,L""); native_scroll_=0;
-            SendMessageW(native_filter_,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(
-                internal_page==InternalPage::History?L"Search history":internal_page==InternalPage::Bookmarks?L"Search bookmarks":L"Search shortcuts"));
+            const wchar_t* cue = internal_page==InternalPage::History ? L"Search history" :
+                internal_page==InternalPage::Bookmarks ? L"Search bookmarks" :
+                internal_page==InternalPage::Privacy ? L"Search cookies and permissions" :
+                internal_page==InternalPage::Extensions ? L"Search extensions" : L"Search shortcuts";
+            SendMessageW(native_filter_,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(cue));
         } else if(!searchable_native) native_filter_page_=InternalPage::None;
         const int content_left_dip=MulDiv(static_cast<int>(content.left),96,static_cast<int>(dpi_));
         const int content_width_dip=MulDiv(static_cast<int>(content.right-content.left),96,static_cast<int>(dpi_));
@@ -208,9 +222,7 @@ void BrowserApp::Impl::Layout() {
             if(ControlText(home_buttons_[0])!=L"Search Google")SetWindowTextW(home_buttons_[0],L"Search Google");
             batch.Place(home_buttons_[0],left+D(home_layout.search_width-44),top+D(8),D(36),D(36),true);
         } else {
-            if(failed && ControlText(home_buttons_[0])!=L"Reload tab")SetWindowTextW(home_buttons_[0],L"Reload tab");
-            const int content_center=content.left+static_cast<int>(content.right-content.left)/2;
-            batch.Place(home_buttons_[0],content_center-D(68),content.top+D(std::max(270,std::min(350,dip_height-64))),D(136),D(38),failed);
+            batch.Place(home_buttons_[0],0,0,0,0,false);
         }
         const int shortcut_width=content_width_dip<420?92:104;
         const int content_center=content.left+static_cast<int>(content.right-content.left)/2;
@@ -230,6 +242,7 @@ void BrowserApp::Impl::Layout() {
             internal_page==InternalPage::Settings?7:
             internal_page==InternalPage::Shortcuts?13:
             internal_page==InternalPage::Diagnostics?14:
+            internal_page==InternalPage::Feedback?17:
             internal_page==InternalPage::Recovery?15:
             internal_page==InternalPage::Extensions?16:
             internal_page==InternalPage::Bookmarks?8:
@@ -301,6 +314,7 @@ void ChromeYouTubeMark(HDC dc,RECT r) {
 void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) {
     native_actions_.clear();
     const auto page = InternalPageFor(tab.url);
+    EnsureInternalPageData(page);
     if (page == InternalPage::None || page == InternalPage::NewTab) { native_page_extent_ = 0; return; }
     const int content_width = static_cast<int>(content.right - content.left);
     const int page_width = std::min(D(980), std::max(D(320), content_width - D(48)));
@@ -308,9 +322,9 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
     const int right = left + page_width;
     const int origin = content.top - native_scroll_;
     int y = origin + D(34);
-    const auto add_action = [&](RECT rect, UINT command) {
+    const auto add_action = [&](RECT rect, UINT command, std::wstring_view name = {}) {
         if (rect.bottom > content.top && rect.top < content.bottom)
-            native_actions_.push_back({rect, command});
+            native_actions_.push_back({rect, command, std::wstring(name)});
     };
     const auto draw_button = [&](RECT rect, const std::wstring& label, UINT command) {
         if (rect.bottom <= content.top || rect.top >= content.bottom) return;
@@ -319,7 +333,7 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
                 hot ? MixChromeColor(kBorder, kAccent, 34) : kBorder, D(22));
         Text(dc, label, rect, small_font_, hot ? kInk : kMuted,
              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        add_action(rect, command);
+        add_action(rect, command, label);
     };
     const auto draw_header = [&](const std::wstring& title, const std::wstring& subtitle) {
         Text(dc, title, {left, y, right, y + D(42)}, heading_font_, kInk,
@@ -389,10 +403,57 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
         draw_header(L"History", L"Pages visited in this WebCom profile. Incognito activity is never added here.");
         draw_button({right - D(170), origin + D(34), right, origin + D(68)}, L"Clear history", ClearHistory);
         y += D(42);
+        if(!closed_tabs_.empty()) {
+            Text(dc,L"Recently closed",{left,y,left+D(180),y+D(28)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+            draw_button({right-D(150),y-D(2),right,y+D(30)},L"Clear recovered",ClearRecentlyClosed);
+            y += D(36);
+            const std::size_t visible_closed=std::min<std::size_t>(3,closed_tabs_.size());
+            for(std::size_t i=0;i<visible_closed;++i){
+                const auto& item=closed_tabs_[i];
+                const RECT row{left,y,right,y+D(58)}; y+=D(64);
+                const UINT command=ReopenClosedBase+static_cast<UINT>(i);
+                const bool hot=hot_native_command_==command;
+                Rounded(dc,row,hot?kHover:kSurface,hot?MixChromeColor(kBorder,kAccent,25):kBorder,D(14));
+                Icon(dc,{row.left+D(16),row.top+D(17),row.left+D(38),row.top+D(39)},Glyph::Restore,kMuted);
+                const auto title=item.title.empty()?Wide(item.url):Wide(item.title);
+                Text(dc,title,{row.left+D(50),row.top+D(6),row.right-D(94),row.top+D(30)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+                std::wstring detail=Wide(item.workspace.empty()?std::string("Main"):item.workspace);
+                if(!item.group.empty())detail+=L" • "+Wide(item.group);
+                if(item.pinned)detail+=L" • pinned";
+                if(item.keep_awake)detail+=L" • keep awake";
+                Text(dc,detail,{row.left+D(50),row.top+D(30),row.right-D(94),row.bottom-D(5)},small_font_,kMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+                Text(dc,L"Restore",{row.right-D(86),row.top,row.right-D(12),row.bottom},small_font_,hot?kAccent:kMuted,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+                add_action(row,command,L"Restore "+title);
+            }
+            y+=D(4);
+        }
         if(!filter_text.empty()) draw_button({left, y, left + D(142), y + D(32)}, L"Delete matches", HistoryDeleteMatches);
         draw_button({left + D(150), y, left + D(296), y + D(32)}, L"Delete last 7 days", HistoryDeleteWeek);
         draw_button({left + D(304), y, left + D(486), y + D(32)}, L"Delete older than 30d", HistoryDeleteOlderMonth);
         y += D(48);
+        const auto history_sites=BuildHistoryHostSummaries(history_entries_,8);
+        if(!history_sites.empty()){
+            Text(dc,L"Top sites",{left,y,left+D(104),y+D(26)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+            Text(dc,L"Filter or clear a whole site",{left+D(92),y,right,y+D(26)},small_font_,kMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+            y+=D(30);
+            const int visible_sites=static_cast<int>(std::min<std::size_t>(4,history_sites.size()));
+            const int gap=D(8),chip=(right-left-gap*(visible_sites-1))/visible_sites;
+            for(int i=0;i<visible_sites;++i){
+                const RECT chip_rect{left+i*(chip+gap),y,left+i*(chip+gap)+chip,y+D(38)};
+                const UINT filter_command=HistoryHostFilterBase+static_cast<UINT>(i);
+                const bool hot=hot_native_command_==filter_command;
+                Rounded(dc,chip_rect,hot?kHover:kSurface,hot?MixChromeColor(kBorder,kAccent,34):kBorder,D(16));
+                const auto& site=history_sites[static_cast<std::size_t>(i)];
+                Text(dc,site.host+L" ("+std::to_wstring(site.visits)+L")",{chip_rect.left+D(12),chip_rect.top,chip_rect.right-D(34),chip_rect.bottom},small_font_,hot?kInk:kMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+                add_action(chip_rect,filter_command,L"Filter history by "+site.host);
+                const RECT clear{chip_rect.right-D(28),chip_rect.top+D(8),chip_rect.right-D(7),chip_rect.bottom-D(8)};
+                const UINT clear_command=DeleteHistoryHostBase+static_cast<UINT>(i);
+                if(hot_native_command_==clear_command)Rounded(dc,clear,kHover,kHover,D(10));
+                Text(dc,L"×",clear,small_font_,kMuted,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+                add_action(clear,clear_command,L"Clear history for "+site.host);
+            }
+            y+=D(52);
+        }
         std::size_t matches = 0;
         for (const auto& item : history_entries_)
             if (HistoryMatches(item,filter_text)) ++matches;
@@ -436,11 +497,11 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
                      small_font_, kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
                 Text(dc, HistoryTimeLabel(item.visited_ms), {row.right - D(142), row.top, row.right - D(50), row.bottom},
                      small_font_, kMuted, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-                add_action(row, command);
+                add_action(row, command,L"Open "+title);
                 const RECT remove{row.right-D(42),row.top+D(13),row.right-D(10),row.bottom-D(13)};
                 if(hot_native_command_==DeleteHistoryBase+static_cast<UINT>(i))Rounded(dc,remove,kHover,kHover,D(16));
                 RECT remove_icon=remove;InflateRect(&remove_icon,-D(8),-D(8));Icon(dc,remove_icon,Glyph::Close,kMuted);
-                add_action(remove,DeleteHistoryBase+static_cast<UINT>(i));
+                add_action(remove,DeleteHistoryBase+static_cast<UINT>(i),L"Remove "+title);
             }
             y=cursor+D(16);
         }
@@ -449,6 +510,7 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
         draw_header(L"Downloads", L"Pause, resume, cancel, reopen and review downloads for this profile.");
         draw_button({right - D(188), origin + D(34), right, origin + D(68)}, L"Open Downloads folder", OpenDownloadsFolder);
         draw_button({right - D(344), origin + D(34), right - D(198), origin + D(68)}, L"Clear completed", ClearDownloadsList);
+        draw_button({right - D(500), origin + D(34), right - D(354), origin + D(68)}, L"Retry failed", RetryFailedDownloads);
         if (download_entries_.empty()) {
             const RECT card{left, y, right, y + D(150)};
             if (card.bottom > content.top && card.top < content.bottom) {
@@ -462,12 +524,22 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
             }
             y = card.bottom + D(24);
         } else {
-            const int row_height = D(96);
+            const int row_height = D(96), heading_height=D(34);
+            int cursor=y;
+            std::wstring download_group;
             for (std::size_t i = 0; i < download_entries_.size(); ++i) {
-                const RECT row{left, y + static_cast<int>(i) * row_height, right,
-                               y + static_cast<int>(i + 1) * row_height - D(6)};
-                if (row.bottom <= content.top || row.top >= content.bottom) continue;
                 auto& item = *download_entries_[i];
+                const auto date_label=HistoryDateLabel(item.started_ms);
+                if(date_label!=download_group){
+                    download_group=date_label;
+                    const RECT heading{left,cursor,right,cursor+heading_height};
+                    if(heading.bottom>content.top && heading.top<content.bottom)
+                        Text(dc,download_group,heading,font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+                    cursor+=heading_height;
+                }
+                const RECT row{left,cursor,right,cursor+row_height-D(6)};
+                cursor+=row_height;
+                if (row.bottom <= content.top || row.top >= content.bottom) continue;
                 const UINT command = DownloadBase + static_cast<UINT>(i);
                 const bool hot = hot_native_command_ == command;
                 Rounded(dc, row, hot ? kHover : kSurface, hot ? MixChromeColor(kBorder, kAccent, 25) : kBorder, D(14));
@@ -494,7 +566,7 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
                     const int fill = static_cast<int>((track.right - track.left) * clamped / std::max<std::int64_t>(1, item.total));
                     if (fill > 0) Rounded(dc, {track.left, track.top, track.left + fill, track.bottom}, kAccent, kAccent, D(5));
                 }
-                add_action(row, command);
+                add_action(row, command,L"Open download "+name);
 
                 const auto small_action = [&](RECT rect, std::wstring_view label, UINT action, bool accent = false) {
                     const bool action_hot = hot_native_command_ == action;
@@ -503,7 +575,7 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
                             action_hot || accent ? MixChromeColor(kBorder, kAccent, 45) : kBorder, D(16));
                     Text(dc, std::wstring(label), rect, small_font_, accent ? kAccent : (action_hot ? kInk : kMuted),
                          DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-                    add_action(rect, action);
+                    add_action(rect, action, label);
                 };
                 const int button_top = row.top + D(43);
                 if (item.state == COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS || item.paused) {
@@ -513,14 +585,18 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
                     small_action({row.right-D(108),button_top,row.right-D(14),button_top+D(32)},
                                  L"Cancel", CancelDownloadBase + static_cast<UINT>(i));
                 } else if (item.state == COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED) {
+                    small_action({row.right-D(218),button_top,row.right-D(116),button_top+D(32)},
+                                 L"Source", OpenDownloadSourceBase + static_cast<UINT>(i));
                     small_action({row.right-D(108),button_top,row.right-D(14),button_top+D(32)},
                                  L"Open", command, true);
                 } else {
+                    small_action({row.right-D(218),button_top,row.right-D(116),button_top+D(32)},
+                                 L"Source", OpenDownloadSourceBase + static_cast<UINT>(i));
                     small_action({row.right-D(108),button_top,row.right-D(14),button_top+D(32)},
                                  L"Retry", RetryDownloadBase + static_cast<UINT>(i), true);
                 }
             }
-            y += static_cast<int>(download_entries_.size()) * row_height + D(16);
+            y=cursor+D(16);
         }
     } else if (page == InternalPage::Bookmarks) {
         draw_header(L"Bookmarks", L"Saved pages in the " + ProfileDisplayName(profile_name_,&appearance_) + L" profile. Folders and HTML import/export stay local to this profile.");
@@ -536,7 +612,7 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
                     root_target?MixChromeColor(kBorder,kAccent,62):kBorder,D(12));
             Text(dc,L"Drop here for bookmarks bar",{root_drop.left+D(12),root_drop.top,root_drop.right-D(12),root_drop.bottom},
                  small_font_,root_target?kInk:kMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-            add_action(root_drop,BookmarkFolderDropBase+999);
+            add_action(root_drop,BookmarkFolderDropBase+999,L"Move bookmark to bookmarks bar");
         }
         std::size_t matches=0;
         for(const auto& b:bookmarks_) if(contains_ci(Wide(b.title),filter_text)||contains_ci(Wide(b.url),filter_text)||contains_ci(Wide(b.folder),filter_text)) ++matches;
@@ -554,7 +630,7 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
             Text(dc,L"Empty bookmark folder",{folder_row.left+D(54),folder_row.top+D(28),folder_row.right-D(106),folder_row.bottom-D(5)},small_font_,kMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
             const RECT remove{folder_row.right-D(92),folder_row.top+D(10),folder_row.right-D(12),folder_row.bottom-D(10)};
             Text(dc,L"Remove",remove,small_font_,kMuted,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-            add_action(remove,DeleteBookmarkFolderBase+static_cast<UINT>(f));
+            add_action(remove,DeleteBookmarkFolderBase+static_cast<UINT>(f),L"Remove folder "+Wide(folder_utf8));
         }
         if (bookmarks_.empty() || matches==0) {
             const RECT card{left, y, right, y + D(150)};
@@ -617,7 +693,7 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
                 const bool remove_hot=hot_native_command_==remove_command;
                 Rounded(dc,remove,remove_hot?MixChromeColor(kSurface,kAccent,12):kSurface,remove_hot?MixChromeColor(kBorder,kAccent,34):kBorder,D(18));
                 Text(dc,L"Remove",remove,small_font_,remove_hot?kInk:kMuted,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-                add_action(row,open_command);add_action(remove,remove_command);
+                add_action(row,open_command,L"Open bookmark "+title);add_action(remove,remove_command,L"Remove bookmark "+title);
             }
             y=cursor+D(16);
         }
@@ -628,6 +704,29 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
         const auto permission_origins=PrivacyPermissionOrigins();
         draw_button({left+D(308),y,left+D(500),y+D(32)},L"Reset all permissions",PrivacyResetAllPermissions);
         y+=D(52);
+        std::size_t total_cookies=0;
+        for(const auto& item:privacy_cookie_domains_)total_cookies+=item.count;
+        const std::size_t permission_rule_count=site_permissions_.size();
+        const bool blocker_enabled=AdBlockerGloballyEnabled();
+        const std::wstring privacy_summary=
+            std::to_wstring(privacy_cookie_domains_.size())+L" cookie domain"+(privacy_cookie_domains_.size()==1?L"":L"s")+
+            L" • "+std::to_wstring(total_cookies)+L" cookie"+(total_cookies==1?L"":L"s")+
+            L" • "+std::to_wstring(permission_origins.size())+L" permission origin"+(permission_origins.size()==1?L"":L"s")+
+            L" • "+std::to_wstring(permission_rule_count)+L" saved rule"+(permission_rule_count==1?L"":L"s");
+        Text(dc,privacy_summary,{left,y,right,y+D(28)},small_font_,kMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+        y+=D(38);
+        const RECT protection{left,y,right,y+D(76)};Rounded(dc,protection,MixChromeColor(kSurface,kAccent,5),kBorder,D(14));
+        Text(dc,L"Ad blocker protection",{protection.left+D(18),protection.top+D(7),protection.right-D(176),protection.top+D(33)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+        std::wstring protection_detail=blocker_enabled?L"Enabled for this profile":L"Disabled for this profile";
+        protection_detail+=L" • "+std::to_wstring(ad_blocker_site_exceptions_.size())+L" paused site"+(ad_blocker_site_exceptions_.size()==1?L"":L"s");
+        Text(dc,protection_detail,{protection.left+D(18),protection.top+D(35),protection.right-D(176),protection.bottom-D(8)},small_font_,blocker_enabled?kAccent:kMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+        if(!ad_blocker_site_exceptions_.empty()){
+            const RECT clear_pause{protection.right-D(156),protection.top+D(20),protection.right-D(16),protection.top+D(56)};
+            Rounded(dc,clear_pause,hot_native_command_==ClearAdBlockerSiteExceptions?kHover:kSurface,kBorder,D(11));
+            Text(dc,L"Clear paused sites",clear_pause,small_font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+            add_action(clear_pause,ClearAdBlockerSiteExceptions,L"Clear paused ad blocker sites");
+        }
+        y=protection.bottom+D(18);
 
         Text(dc,L"Cookies and site data",{left,y,right,y+D(34)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);y+=D(40);
         if(!privacy_loaded_ && !privacy_loading_){
@@ -642,9 +741,12 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
             Text(dc,L"No cookies are currently stored for this profile.",{left,y,right,y+D(38)},small_font_,kMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);y+=D(54);
         }else{
             const int row_height=D(62);
+            std::size_t visible_cookie_rows=0;
             for(std::size_t i=0;i<privacy_cookie_domains_.size();++i){
                 const auto& item=privacy_cookie_domains_[i];
-                const RECT row{left,y+static_cast<int>(i)*row_height,right,y+static_cast<int>(i+1)*row_height-D(6)};
+                if(!contains_ci(item.domain,filter_text))continue;
+                const int row_index=static_cast<int>(visible_cookie_rows++);
+                const RECT row{left,y+row_index*row_height,right,y+(row_index+1)*row_height-D(6)};
                 if(row.bottom<=content.top || row.top>=content.bottom)continue;
                 const UINT command=PrivacyCookieBase+static_cast<UINT>(i);const bool hot=hot_native_command_==command;
                 Rounded(dc,row,hot?kHover:kSurface,hot?MixChromeColor(kBorder,kAccent,25):kBorder,D(14));
@@ -656,7 +758,10 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
                 Text(dc,L"Clear",clear,small_font_,kMuted,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
                 add_action(row,command);add_action(clear,command);
             }
-            y+=static_cast<int>(privacy_cookie_domains_.size())*row_height+D(24);
+            if(!filter_text.empty() && visible_cookie_rows==0){
+                Text(dc,L"No matching cookie domains.",{left,y,right,y+D(38)},small_font_,kMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+                y+=D(54);
+            }else y+=static_cast<int>(visible_cookie_rows)*row_height+D(24);
         }
 
         Text(dc,L"Permission exceptions",{left,y,right,y+D(34)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);y+=D(40);
@@ -664,21 +769,28 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
             Text(dc,L"No saved Camera, Microphone, Location or Notifications exceptions.",{left,y,right,y+D(38)},small_font_,kMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);y+=D(54);
         }else{
             const int row_height=D(62);
+            std::size_t visible_permission_rows=0;
             for(std::size_t i=0;i<permission_origins.size();++i){
-                const auto& permission_origin=permission_origins[i];unsigned rule_count=0;
+                const auto& permission_origin=permission_origins[i];const auto permission_origin_wide=Wide(permission_origin);
+                if(!contains_ci(permission_origin_wide,filter_text))continue;
+                unsigned rule_count=0;
                 for(const auto& rule:site_permissions_)if(rule.origin==permission_origin)++rule_count;
-                const RECT row{left,y+static_cast<int>(i)*row_height,right,y+static_cast<int>(i+1)*row_height-D(6)};
+                const int row_index=static_cast<int>(visible_permission_rows++);
+                const RECT row{left,y+row_index*row_height,right,y+(row_index+1)*row_height-D(6)};
                 if(row.bottom<=content.top || row.top>=content.bottom)continue;
                 const UINT command=PrivacyPermissionBase+static_cast<UINT>(i);const bool hot=hot_native_command_==command;
                 Rounded(dc,row,hot?kHover:kSurface,hot?MixChromeColor(kBorder,kAccent,25):kBorder,D(14));
                 Icon(dc,{row.left+D(16),row.top+D(17),row.left+D(38),row.top+D(39)},Glyph::Shield,kMuted);
-                Text(dc,Wide(permission_origin),{row.left+D(50),row.top+D(7),row.right-D(116),row.top+D(31)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+                Text(dc,permission_origin_wide,{row.left+D(50),row.top+D(7),row.right-D(116),row.top+D(31)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
                 Text(dc,std::to_wstring(rule_count)+L" saved exception"+(rule_count==1?L"":L"s"),{row.left+D(50),row.top+D(31),row.right-D(116),row.bottom-D(7)},small_font_,kMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
                 const RECT reset{row.right-D(96),row.top+D(12),row.right-D(12),row.bottom-D(12)};
                 Rounded(dc,reset,hot?kHover:kSurface,kBorder,D(18));Text(dc,L"Reset",reset,small_font_,kMuted,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
                 add_action(row,command);add_action(reset,command);
             }
-            y+=static_cast<int>(permission_origins.size())*row_height+D(24);
+            if(!filter_text.empty() && visible_permission_rows==0){
+                Text(dc,L"No matching permission origins.",{left,y,right,y+D(38)},small_font_,kMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+                y+=D(54);
+            }else y+=static_cast<int>(visible_permission_rows)*row_height+D(24);
         }
     } else if (page == InternalPage::Sessions) {
         draw_header(L"Saved Sessions", L"Named sets of website tabs saved separately from crash recovery. Reopening a session creates new tabs.");
@@ -782,25 +894,35 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
             Text(dc,L"No matching shortcuts",{left,y,right,y+D(54)},font_,kMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
         y+=std::max(1,visible_rows)*row_h+D(24);
     } else if (page == InternalPage::Welcome) {
-        draw_header(L"Welcome to WebCom", L"A fast native Windows browser shell with profiles, workspaces, privacy controls and a Chromium/WebView2 engine.");
+        draw_header(L"Welcome to WebCom", L"Finish the essentials, then start browsing. WebCom never silently changes Windows defaults or imports data without your action.");
         const bool default_browser = IsDefaultBrowserNow();
-        const RECT status{left,y,right,y+D(92)};
-        Rounded(dc,status,default_browser?MixChromeColor(kSurface,kAccent,8):kSurface,kBorder,D(16));
-        Icon(dc,{status.left+D(20),status.top+D(30),status.left+D(46),status.top+D(56)},Glyph::Globe,default_browser?kAccent:kMuted);
-        Text(dc,default_browser?L"WebCom is your HTTP/HTTPS browser":L"Choose your default browser in Windows",
-             {status.left+D(60),status.top+D(12),status.right-D(18),status.top+D(40)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-        Text(dc,default_browser?L"Windows currently opens web links with WebCom.":L"WebCom never silently takes over defaults. Windows Settings keeps the final choice under your control.",
-             {status.left+D(60),status.top+D(40),status.right-D(18),status.bottom-D(12)},small_font_,kMuted,DT_LEFT|DT_VCENTER|DT_WORDBREAK|DT_NOPREFIX);
-        y=status.bottom+D(12);
-        const RECT defaults{left,y,std::min(right,left+D(240)),y+D(42)};
-        Rounded(dc,defaults,hot_native_command_==OpenDefaultApps?kHover:kSurface,kBorder,D(12));
-        Text(dc,default_browser?L"Open Default Apps":L"Set WebCom as default",defaults,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-        add_action(defaults,OpenDefaultApps);
-        const RECT updates{defaults.right+D(10),y,std::min(right,static_cast<int>(defaults.right)+D(180)),y+D(42)};
-        if(updates.right>updates.left+D(40)){Rounded(dc,updates,hot_native_command_==UpdatesPage?kHover:kSurface,kBorder,D(12));Text(dc,L"Update choices",updates,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(updates,UpdatesPage);}
-        const RECT shortcuts{updates.right+D(10),y,std::min(right,static_cast<int>(updates.right)+D(190)),y+D(42)};
-        if(shortcuts.right>shortcuts.left+D(40)){Rounded(dc,shortcuts,hot_native_command_==ShortcutsPage?kHover:kSurface,kBorder,D(12));Text(dc,L"Keyboard shortcuts",shortcuts,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(shortcuts,ShortcutsPage);}
-        y+=D(64);
+        const auto progress=BuildOnboardingProgress(default_browser,bookmarks_.size(),workspaces_.size(),update_settings_.checks_enabled);
+        const RECT progress_card{left,y,right,y+D(88)};
+        Rounded(dc,progress_card,progress.completed==progress.total?MixChromeColor(kSurface,kAccent,9):kSurface,kBorder,D(16));
+        Text(dc,L"Setup progress",{progress_card.left+D(18),progress_card.top+D(8),progress_card.right-D(18),progress_card.top+D(35)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+        Text(dc,std::to_wstring(progress.completed)+L" of "+std::to_wstring(progress.total)+L" essentials complete",
+             {progress_card.left+D(18),progress_card.top+D(36),progress_card.right-D(18),progress_card.bottom-D(10)},small_font_,progress.completed==progress.total?kAccent:kMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+        y=progress_card.bottom+D(12);
+
+        const struct SetupRow { const wchar_t* title; std::wstring detail; bool done; UINT command; const wchar_t* action; } setup_rows[]{
+            {L"Default browser", default_browser?L"Windows currently opens HTTP/HTTPS links with WebCom.":L"Windows Settings keeps the final default-browser choice under your control.", progress.default_browser, OpenDefaultApps, default_browser?L"Open settings":L"Set up"},
+            {L"Bookmarks", progress.bookmarks_ready?std::to_wstring(bookmarks_.size())+L" bookmark"+(bookmarks_.size()==1?L"":L"s")+L" ready in this profile.":L"Import an HTML bookmarks file from another browser when you are ready.", progress.bookmarks_ready, ImportBookmarks, progress.bookmarks_ready?L"Import more":L"Import"},
+            {L"Workspaces", progress.workspaces_ready?std::to_wstring(workspaces_.size())+L" workspaces ready for separate projects.":L"Create another workspace to separate work, personal browsing or projects.", progress.workspaces_ready, WorkspaceMenu, progress.workspaces_ready?L"Manage":L"Create"},
+            {L"Update checks", progress.updates_ready?L"Release checks are enabled; downloads and installs remain explicit.":L"Choose Stable/Beta and whether WebCom should check for releases.", progress.updates_ready, UpdatesPage, L"Updates"}
+        };
+        for(const auto& row_data:setup_rows){
+            const RECT row{left,y,right,y+D(72)};Rounded(dc,row,kSurface,kBorder,D(14));
+            const RECT mark{row.left+D(16),row.top+D(20),row.left+D(46),row.top+D(50)};
+            Rounded(dc,mark,row_data.done?MixChromeColor(kSurface,kAccent,18):kSurface,row_data.done?kAccent:kBorder,D(15));
+            Text(dc,row_data.done?L"✓":L"•",mark,font_,row_data.done?kAccent:kMuted,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+            Text(dc,row_data.title,{row.left+D(58),row.top+D(7),row.right-D(160),row.top+D(33)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+            Text(dc,row_data.detail,{row.left+D(58),row.top+D(34),row.right-D(160),row.bottom-D(8)},small_font_,kMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+            const RECT action{row.right-D(142),row.top+D(18),row.right-D(16),row.top+D(54)};
+            Rounded(dc,action,hot_native_command_==row_data.command?kHover:kSurface,kBorder,D(10));
+            Text(dc,row_data.action,action,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(action,row_data.command,row_data.action);
+            y=row.bottom+D(9);
+        }
+        y+=D(6);
         const std::array<std::pair<std::wstring,std::wstring>,3> highlights{{
             {L"Profiles and Workspaces",L"Keep work, personal browsing and projects visually separated without running separate browser products."},
             {L"Privacy controls",L"Inspect cookies, site data and permission exceptions from native WebCom surfaces without exposing secret values."},
@@ -816,8 +938,90 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
         const RECT start{left,y,std::min(right,left+D(220)),y+D(44)};
         Rounded(dc,start,hot_native_command_==WelcomeStartBrowsing?kHover:kAccent,kAccent,D(14));
         Text(dc,L"Start browsing",start,font_,kCaption,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-        add_action(start,WelcomeStartBrowsing);
+        add_action(start,WelcomeStartBrowsing,L"Start browsing");
         y=start.bottom+D(24);
+    } else if (page == InternalPage::About) {
+        draw_header(L"About WebCom", L"WebCom v3 public beta • native Windows browser chrome with Microsoft Edge WebView2 rendering.");
+        const auto diagnostics=DiagnosticsSnapshotNow();
+        const std::wstring default_state=IsDefaultBrowserNow()?L"WebCom currently handles HTTP/HTTPS links":L"Windows Default Apps controls the current HTTP/HTTPS handler";
+        const std::wstring runtime=diagnostics.runtime_version.empty()?L"Unavailable":diagnostics.runtime_version;
+        const std::array<std::pair<std::wstring,std::wstring>,7> facts{{
+            {L"WebCom version",diagnostics.version},
+            {L"WebView2 Runtime",runtime},
+            {L"Release channel",diagnostics.update_channel},
+            {L"Default browser",default_state},
+            {L"Profile",diagnostics.profile_label.empty()?diagnostics.profile_key:diagnostics.profile_label},
+            {L"Automatic tab sleep",SleepTimeoutSettingsDetail(sleep_timeout_)},
+            {L"Never-sleep sites",std::to_wstring(never_sleep_hosts_.size())+L" saved exception"+(never_sleep_hosts_.size()==1?L"":L"s")}
+        }};
+        for(const auto& fact:facts){
+            const RECT row{left,y,right,y+D(58)}; Rounded(dc,row,kSurface,kBorder,D(14));
+            Text(dc,fact.first,{row.left+D(18),row.top+D(7),row.right-D(18),row.top+D(29)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+            Text(dc,fact.second,{row.left+D(18),row.top+D(29),row.right-D(18),row.bottom-D(7)},small_font_,kMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+            y=row.bottom+D(8);
+        }
+        y+=D(4);
+        struct AboutAction{const wchar_t* label;UINT command;};
+        const std::array<AboutAction,5> actions{{
+            {L"Check for updates",CheckUpdates},
+            {L"Windows Default Apps",OpenDefaultApps},
+            {L"Performance snapshot",MemoryReport},
+            {L"Support diagnostics",DiagnosticsPage},
+            {L"Open data folder",OpenDataFolder}
+        }};
+        int action_left=left;
+        for(const auto& action:actions){
+            const int width=D(action.command==OpenDefaultApps?174:action.command==MemoryReport?166:action.command==DiagnosticsPage?164:150);
+            if(action_left+width>right){action_left=left;y+=D(48);}
+            const RECT button{action_left,y,action_left+width,y+D(38)};
+            Rounded(dc,button,hot_native_command_==action.command?kHover:kSurface,kBorder,D(12));
+            Text(dc,action.label,button,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(button,action.command,action.label);
+            action_left=button.right+D(10);
+        }
+        y+=D(58);
+        const RECT note{left,y,right,y+D(134)};Rounded(dc,note,MixChromeColor(kSurface,kAccent,5),kBorder,D(14));
+        Text(dc,L"Compatibility and privacy",{note.left+D(18),note.top+D(8),note.right-D(18),note.top+D(34)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+        Text(dc,L"WebCom uses the installed Microsoft Edge WebView2 Runtime for website rendering. Chrome Sync and full Chrome Web Store compatibility are not claimed. Google or other providers can restrict sign-in inside embedded browser runtimes. Memory usage depends on the runtime, sites and tab state; WebCom does not claim a fixed RAM-saving percentage without matched Windows measurements.",
+             {note.left+D(18),note.top+D(36),note.right-D(18),note.bottom-D(10)},small_font_,kMuted,DT_LEFT|DT_TOP|DT_WORDBREAK|DT_NOPREFIX);
+        y=note.bottom+D(24);
+    } else if (page == InternalPage::Feedback) {
+        draw_header(L"Report a Problem", L"Prepare a privacy-safe report for the support channel you choose. WebCom does not upload diagnostics automatically.");
+        const auto diagnostics=DiagnosticsSnapshotNow();
+        const std::array<std::pair<std::wstring,std::wstring>,4> facts{{
+            {L"WebCom version",diagnostics.version},
+            {L"WebView2 Runtime",diagnostics.runtime_version.empty()?L"Unavailable":diagnostics.runtime_version},
+            {L"Release channel",diagnostics.update_channel},
+            {L"Profile",diagnostics.profile_label.empty()?diagnostics.profile_key:diagnostics.profile_label}
+        }};
+        for(const auto& fact:facts){
+            const RECT row{left,y,right,y+D(56)};Rounded(dc,row,kSurface,kBorder,D(14));
+            Text(dc,fact.first,{row.left+D(18),row.top+D(6),row.right-D(18),row.top+D(28)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+            Text(dc,fact.second,{row.left+D(18),row.top+D(29),row.right-D(18),row.bottom-D(6)},small_font_,kMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+            y=row.bottom+D(8);
+        }
+        y+=D(8);
+        const RECT template_button{left,y,std::min(right,left+D(220)),y+D(42)};
+        Rounded(dc,template_button,hot_native_command_==CopyProblemTemplate?kHover:kSurface,kBorder,D(12));
+        Text(dc,L"Copy report template",template_button,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(template_button,CopyProblemTemplate,L"Copy report template");
+        const RECT diagnostics_button{template_button.right+D(10),y,std::min(right,static_cast<int>(template_button.right)+D(210)),y+D(42)};
+        if(diagnostics_button.right>diagnostics_button.left+D(60)){Rounded(dc,diagnostics_button,hot_native_command_==ExportDiagnosticsBundle?kHover:kSurface,kBorder,D(12));Text(dc,L"Export diagnostics ZIP",diagnostics_button,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(diagnostics_button,ExportDiagnosticsBundle,L"Export diagnostics ZIP");}
+        y+=D(56);
+        const RECT recovery_button{left,y,std::min(right,left+D(220)),y+D(42)};
+        Rounded(dc,recovery_button,hot_native_command_==ExportRecoveryReport?kHover:kSurface,kBorder,D(12));
+        Text(dc,L"Export recovery report",recovery_button,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(recovery_button,ExportRecoveryReport,L"Export recovery report");
+        const RECT data_button{recovery_button.right+D(10),y,std::min(right,static_cast<int>(recovery_button.right)+D(180)),y+D(42)};
+        if(data_button.right>data_button.left+D(60)){Rounded(dc,data_button,hot_native_command_==OpenDataFolder?kHover:kSurface,kBorder,D(12));Text(dc,L"Open data folder",data_button,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(data_button,OpenDataFolder,L"Open data folder");}
+        y+=D(62);
+        const RECT steps{left,y,right,y+D(184)};Rounded(dc,steps,MixChromeColor(kSurface,kAccent,5),kBorder,D(14));
+        Text(dc,L"Recommended report flow",{steps.left+D(18),steps.top+D(8),steps.right-D(18),steps.top+D(34)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+        Text(dc,L"1. Copy the report template and describe the exact steps that reproduce the issue.\n2. Export the support diagnostics ZIP if the problem involves startup, WebView2, updates or extensions.\n3. Use the recovery report for crashes, failed updates or rollback problems.\n4. Send only the files you choose through your normal support channel. WebCom never uploads them automatically.",
+             {steps.left+D(18),steps.top+D(38),steps.right-D(18),steps.bottom-D(12)},small_font_,kMuted,DT_LEFT|DT_TOP|DT_WORDBREAK|DT_NOPREFIX);
+        y=steps.bottom+D(18);
+        const RECT privacy{left,y,right,y+D(118)};Rounded(dc,privacy,kSurface,kBorder,D(14));
+        Text(dc,L"Privacy boundary",{privacy.left+D(18),privacy.top+D(8),privacy.right-D(18),privacy.top+D(34)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+        Text(dc,L"The copied template intentionally omits browsing URLs, page titles, cookies, passwords and form contents. The diagnostics exporter is explicit and local; review any generated file before sharing it.",
+             {privacy.left+D(18),privacy.top+D(38),privacy.right-D(18),privacy.bottom-D(12)},small_font_,kMuted,DT_LEFT|DT_TOP|DT_WORDBREAK|DT_NOPREFIX);
+        y=privacy.bottom+D(24);
     } else if (page == InternalPage::Recovery) {
         draw_header(L"Recovery & Reliability", L"Crash evidence, update health, rollback readiness and an explicit local recovery report. Nothing on this page is uploaded automatically.");
         const auto reliability=ReliabilitySnapshotNow();
@@ -844,17 +1048,17 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
         }
         const RECT report{left,y,std::min(right,left+D(220)),y+D(40)};
         Rounded(dc,report,hot_native_command_==ExportRecoveryReport?kHover:kSurface,kBorder,D(12));
-        Text(dc,L"Export recovery report",report,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(report,ExportRecoveryReport);
+        Text(dc,L"Export recovery report",report,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(report,ExportRecoveryReport,L"Export recovery report");
         const RECT diagnostics{static_cast<int>(report.right)+D(10),y,std::min(right,static_cast<int>(report.right)+D(190)),y+D(40)};
-        if(diagnostics.right>diagnostics.left+D(40)){Rounded(dc,diagnostics,hot_native_command_==DiagnosticsPage?kHover:kSurface,kBorder,D(12));Text(dc,L"Support diagnostics",diagnostics,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(diagnostics,DiagnosticsPage);}
+        if(diagnostics.right>diagnostics.left+D(40)){Rounded(dc,diagnostics,hot_native_command_==DiagnosticsPage?kHover:kSurface,kBorder,D(12));Text(dc,L"Support diagnostics",diagnostics,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(diagnostics,DiagnosticsPage,L"Support diagnostics");}
         const RECT updates{static_cast<int>(diagnostics.right)+D(10),y,std::min(right,static_cast<int>(diagnostics.right)+D(160)),y+D(40)};
-        if(updates.right>updates.left+D(40)){Rounded(dc,updates,hot_native_command_==UpdatesPage?kHover:kSurface,kBorder,D(12));Text(dc,L"Updates",updates,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(updates,UpdatesPage);}
+        if(updates.right>updates.left+D(40)){Rounded(dc,updates,hot_native_command_==UpdatesPage?kHover:kSurface,kBorder,D(12));Text(dc,L"Updates",updates,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(updates,UpdatesPage,L"Updates");}
         y+=D(56);
         if(reliability.rollback_recommended&&recovery_package_&&recovery_package_->version==update_transaction_.previous_version){
             const RECT rollback{left,y,std::min(right,left+D(300)),y+D(42)};
             Rounded(dc,rollback,hot_native_command_==RollbackPreviousVersion?kHover:kSurface,kAccent,D(12));
             Text(dc,L"Rollback to verified WebCom "+Wide(recovery_package_->version)+L"...",rollback,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-            add_action(rollback,RollbackPreviousVersion);y+=D(58);
+            add_action(rollback,RollbackPreviousVersion,L"Rollback previous version");y+=D(58);
         }
         const RECT privacy{left,y,right,y+D(112)};Rounded(dc,privacy,MixChromeColor(kSurface,kAccent,5),kBorder,D(14));
         Text(dc,L"Local evidence only",{privacy.left+D(18),privacy.top+D(8),privacy.right-D(18),privacy.top+D(34)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
@@ -867,14 +1071,14 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
         const RECT bundle_button{copy_button.right+D(10),y,std::min(right,static_cast<int>(copy_button.right)+D(180)),y+D(38)};
         const RECT folder_button{bundle_button.right+D(10),y,std::min(right,static_cast<int>(bundle_button.right)+D(170)),y+D(38)};
         Rounded(dc,copy_button,hot_native_command_==CopyDiagnostics?kHover:kSurface,kBorder,D(12));
-        Text(dc,L"Copy diagnostics",copy_button,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(copy_button,CopyDiagnostics);
+        Text(dc,L"Copy diagnostics",copy_button,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(copy_button,CopyDiagnostics,L"Copy diagnostics");
         if(bundle_button.right>bundle_button.left+D(40)){
             Rounded(dc,bundle_button,hot_native_command_==ExportDiagnosticsBundle?kHover:kSurface,kBorder,D(12));
-            Text(dc,L"Export support ZIP",bundle_button,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(bundle_button,ExportDiagnosticsBundle);
+            Text(dc,L"Export support ZIP",bundle_button,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(bundle_button,ExportDiagnosticsBundle,L"Export support ZIP");
         }
         if(folder_button.right>folder_button.left+D(40)){
             Rounded(dc,folder_button,hot_native_command_==OpenDataFolder?kHover:kSurface,kBorder,D(12));
-            Text(dc,L"Open data folder",folder_button,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(folder_button,OpenDataFolder);
+            Text(dc,L"Open data folder",folder_button,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(folder_button,OpenDataFolder,L"Open data folder");
         }
         y+=D(54);
         const auto diagnostic_text=DiagnosticsTextNow();
@@ -887,7 +1091,7 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
         Text(dc,L"Release channel",{channel_row.left+D(18),channel_row.top+D(8),channel_row.right-D(42),channel_row.top+D(32)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
         const auto channel=Wide(ReleaseChannelName(update_settings_.channel));
         Text(dc,channel==L"beta"?L"Beta • preview releases":L"Stable • recommended public releases",{channel_row.left+D(18),channel_row.top+D(32),channel_row.right-D(42),channel_row.bottom-D(8)},small_font_,kMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-        Icon(dc,{channel_row.right-D(32),channel_row.top+D(26),channel_row.right-D(16),channel_row.top+D(42)},Glyph::Forward,kMuted);add_action(channel_row,UpdateChannelMenu);
+        Icon(dc,{channel_row.right-D(32),channel_row.top+D(26),channel_row.right-D(16),channel_row.top+D(42)},Glyph::Forward,kMuted);add_action(channel_row,UpdateChannelMenu,L"Release channel");
         y=channel_row.bottom+D(24);
     } else if (page == InternalPage::Updates) {
         draw_header(L"Updates", L"User-triggered release checks, verified staging and rollback-safe health state. WebCom never installs silently.");
@@ -914,9 +1118,9 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
         const RECT checks{left,y,std::min(right,left+D(240)),y+D(40)};
         Rounded(dc,checks,hot_native_command_==ToggleUpdateChecks?kHover:kSurface,kBorder,D(12));
         Text(dc,update_settings_.checks_enabled?L"Disable update checks":L"Enable update checks",checks,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-        add_action(checks,ToggleUpdateChecks);
+        add_action(checks,ToggleUpdateChecks,L"Automatic update checks");
         const RECT channel_button{static_cast<int>(checks.right)+D(10),y,std::min(right,static_cast<int>(checks.right)+D(190)),y+D(40)};
-        if(channel_button.right>channel_button.left+D(40)){Rounded(dc,channel_button,hot_native_command_==UpdateChannelMenu?kHover:kSurface,kBorder,D(12));Text(dc,L"Release channel",channel_button,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(channel_button,UpdateChannelMenu);}
+        if(channel_button.right>channel_button.left+D(40)){Rounded(dc,channel_button,hot_native_command_==UpdateChannelMenu?kHover:kSurface,kBorder,D(12));Text(dc,L"Release channel",channel_button,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(channel_button,UpdateChannelMenu,L"Release channel");}
         const int check_left=static_cast<int>(channel_button.right)+D(10);
         const RECT check_button{check_left,y,std::min(right,check_left+D(190)),y+D(40)};
         const auto retry_remaining=UpdateRetryRemainingNow();
@@ -924,7 +1128,7 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
         if(check_button.right>check_button.left+D(40)){
             Rounded(dc,check_button,hot_native_command_==CheckForUpdates&&can_check?kHover:kSurface,kBorder,D(12));
             Text(dc,update_checking_?L"Checking...":retry_remaining?L"Retry in "+std::to_wstring(retry_remaining)+L"s":L"Check for updates",check_button,font_,can_check?kAccent:kMuted,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-            if(can_check)add_action(check_button,CheckForUpdates);
+            if(can_check)add_action(check_button,CheckForUpdates,L"Check for updates");
         }
         y+=D(56);
         if(!update_runtime_status_.empty()){
@@ -941,7 +1145,7 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
             const bool can_stage=!update_staging_&&!update_checking_;
             Rounded(dc,stage,hot_native_command_==StageAvailableUpdate&&can_stage?kHover:kSurface,kBorder,D(12));
             Text(dc,update_staging_?L"Verifying...":L"Stage verified update",stage,font_,can_stage?kAccent:kMuted,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-            if(can_stage)add_action(stage,StageAvailableUpdate);
+            if(can_stage)add_action(stage,StageAvailableUpdate,L"Download verified update");
             y=static_cast<int>(available.bottom)+D(10);
         }
         if(update_transaction_.phase!=UpdateTransactionPhase::None){
@@ -956,15 +1160,15 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
             if(update_transaction_.phase==UpdateTransactionPhase::VerifiedPackage){
                 const RECT install{state_panel.left+D(18),button_top,state_panel.left+D(210),state_panel.bottom-D(8)};
                 Rounded(dc,install,hot_native_command_==InstallStagedUpdate?kHover:kSurface,kBorder,D(12));
-                Text(dc,L"Install verified update...",install,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(install,InstallStagedUpdate);
+                Text(dc,L"Install verified update...",install,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(install,InstallStagedUpdate,L"Install verified update");
              } else if(EvaluateRecoveryReadiness(update_transaction_,recovery_package_,kWebComVersion,update_runtime_config_.publisher_sha256).ready()) {
                 const RECT rollback{state_panel.left+D(18),button_top,state_panel.left+D(230),state_panel.bottom-D(8)};
                 Rounded(dc,rollback,hot_native_command_==RollbackPreviousVersion?kHover:kSurface,kBorder,D(12));
-                Text(dc,L"Rollback to "+Wide(recovery_package_->version)+L"...",rollback,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(rollback,RollbackPreviousVersion);
+                Text(dc,L"Rollback to "+Wide(recovery_package_->version)+L"...",rollback,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(rollback,RollbackPreviousVersion,L"Rollback previous version");
             }
             const RECT clear_button{std::max(left,static_cast<int>(state_panel.right)-D(220)),button_top,state_panel.right-D(18),state_panel.bottom-D(8)};
             Rounded(dc,clear_button,hot_native_command_==ClearUpdateTransaction?kHover:kSurface,kBorder,D(12));
-            Text(dc,L"Clear staged update state",clear_button,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(clear_button,ClearUpdateTransaction);
+            Text(dc,L"Clear staged update state",clear_button,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(clear_button,ClearUpdateTransaction,L"Clear staged update state");
             y=static_cast<int>(state_panel.bottom)+D(12);
         }
         const RECT security{left,y,right,y+D(118)}; Rounded(dc,security,MixChromeColor(kSurface,kAccent,5),kBorder,D(14));
@@ -973,21 +1177,64 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
         y=static_cast<int>(security.bottom)+D(24);
     } else if (page == InternalPage::Extensions) {
         draw_header(L"Extensions", L"Chromium/WebView2 extensions for the " + ProfileDisplayName(profile_name_,&appearance_) + L" profile. Extension state is isolated per profile.");
+        y+=D(42); // reserve the shared native search field row
         const RECT load{left,y,std::min(right,left+D(190)),y+D(40)};
         Rounded(dc,load,hot_native_command_==ExtensionsLoadUnpacked?kHover:kSurface,kBorder,D(12));
         Text(dc,L"Load unpacked...",load,font_,extensions_supported_?kAccent:kMuted,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-        if(extensions_supported_)add_action(load,ExtensionsLoadUnpacked);
+        if(extensions_supported_)add_action(load,ExtensionsLoadUnpacked,L"Load unpacked extension");
         const RECT refresh{static_cast<int>(load.right)+D(10),y,std::min(right,static_cast<int>(load.right)+D(150)),y+D(40)};
         if(refresh.right>refresh.left+D(40)){
             Rounded(dc,refresh,hot_native_command_==ExtensionsRefresh?kHover:kSurface,kBorder,D(12));
             Text(dc,extensions_loading_?L"Loading...":L"Refresh",refresh,font_,extensions_loading_?kMuted:kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-            if(!extensions_loading_)add_action(refresh,ExtensionsRefresh);
+            if(!extensions_loading_)add_action(refresh,ExtensionsRefresh,L"Refresh extensions");
         }
         y+=D(56);
+
+        const auto extension_state_for=[&](std::size_t i){
+            ExtensionViewState state;
+            if(i>=extensions_.size())return state;
+            const auto& extension=extensions_[i];
+            state.enabled=extension.enabled;
+            state.built_in=extension.id==ad_blocker_id_;
+            for(std::size_t source=0;source<extension_sources_.size();++source){
+                if(extension_sources_[source].extension_id!=Utf8(extension.id))continue;
+                state.source_recorded=true;
+                if(source<extension_source_health_.size()){
+                    const auto& health=extension_source_health_[source];
+                    state.source_manifest_valid=health.manifest.valid;
+                    state.source_snapshot_available=health.snapshot.available;
+                    state.source_changed=health.changed;
+                    state.source_baseline_known=health.baseline_known;
+                }
+                break;
+            }
+            return state;
+        };
+        ExtensionViewCounts extension_counts;
+        for(std::size_t i=0;i<extensions_.size();++i)AddExtensionViewCount(extension_counts,extension_state_for(i));
+        const struct ExtensionFilterChip { ExtensionViewFilter filter; UINT command; const wchar_t* label; std::size_t count; } chips[]{
+            {ExtensionViewFilter::All,ExtensionsFilterAll,L"All",extension_counts.all},
+            {ExtensionViewFilter::Enabled,ExtensionsFilterEnabled,L"Enabled",extension_counts.enabled},
+            {ExtensionViewFilter::Disabled,ExtensionsFilterDisabled,L"Disabled",extension_counts.disabled},
+            {ExtensionViewFilter::NeedsAttention,ExtensionsFilterAttention,L"Needs attention",extension_counts.attention}
+        };
+        const bool compact_filters=(right-left)<D(700);
+        int chip_x=left,chip_y=y;
+        for(std::size_t i=0;i<std::size(chips);++i){
+            const int chip_width=i==3?D(180):D(136);
+            if(compact_filters && chip_x+chip_width>right){chip_x=left;chip_y+=D(42);}
+            const RECT chip{chip_x,chip_y,chip_x+chip_width,chip_y+D(34)};
+            const bool selected=extension_view_filter_==chips[i].filter;
+            Rounded(dc,chip,selected?MixChromeColor(kSurface,kAccent,16):kSurface,selected?MixChromeColor(kBorder,kAccent,45):kBorder,D(17));
+            Text(dc,std::wstring(chips[i].label)+L" ("+std::to_wstring(chips[i].count)+L")",chip,small_font_,selected?kInk:kMuted,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+            add_action(chip,chips[i].command,chips[i].label);chip_x+=chip_width+D(8);
+        }
+        y=chip_y+D(48);
+
         const RECT notice{left,y,right,y+D(112)};
         Rounded(dc,notice,MixChromeColor(kSurface,kAccent,5),kBorder,D(14));
         Text(dc,L"WebView2 extension compatibility",{notice.left+D(18),notice.top+D(8),notice.right-D(18),notice.top+D(34)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-        Text(dc,L"WebCom can load unpacked Chromium/Chrome extensions and persist them in this profile. Content scripts, background/service-worker behavior and extension APIs supported by WebView2 can run. Chrome-style toolbar icons, badges and popup entry points are not supplied by WebView2, so extensions that depend on that UI can be partially usable.",
+        Text(dc,L"WebCom can load unpacked Chromium/Chrome extensions and persist them in this profile. Content scripts, background/service-worker behavior and extension APIs supported by WebView2 can run. Chrome-style toolbar icons, badges and popup entry points are not supplied by WebView2, so extensions that depend on that UI can be partially usable. WebCom does not claim Chrome Web Store compatibility.",
              {notice.left+D(18),notice.top+D(36),notice.right-D(18),notice.bottom-D(10)},small_font_,kMuted,DT_LEFT|DT_TOP|DT_WORDBREAK|DT_NOPREFIX);
         y=static_cast<int>(notice.bottom)+D(12);
         if(!extensions_status_.empty()){
@@ -995,29 +1242,32 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
             Text(dc,extensions_status_,{status.left+D(16),status.top+D(8),status.right-D(16),status.bottom-D(8)},small_font_,extensions_supported_?kMuted:kAccent,DT_LEFT|DT_VCENTER|DT_WORDBREAK|DT_NOPREFIX);
             y=static_cast<int>(status.bottom)+D(10);
         }
-        if(extensions_.empty() && !extensions_loading_){
-            const RECT empty{left,y,right,y+D(82)};Rounded(dc,empty,kSurface,kBorder,D(14));
-            Text(dc,L"No installed extensions to show",{empty.left+D(18),empty.top+D(10),empty.right-D(18),empty.top+D(36)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-            Text(dc,extension_sources_.empty()?L"Choose Load unpacked and select the top-level folder containing manifest.json. WebView2 references that folder directly, so keep it in place.":L"WebView2 currently reports no installed extensions. Saved unpacked sources are shown below so you can reload them if their files changed.",{empty.left+D(18),empty.top+D(38),empty.right-D(18),empty.bottom-D(10)},small_font_,kMuted,DT_LEFT|DT_TOP|DT_WORDBREAK|DT_NOPREFIX);
-            y=static_cast<int>(empty.bottom)+D(12);
-        } else {
+
+        std::size_t visible_extensions=0;
+        if(!extensions_.empty()){
             for(std::size_t i=0;i<extensions_.size();++i){
                 const auto& extension=extensions_[i];
                 int source_index=-1;
+                std::wstring source_path;
                 for(std::size_t source=0;source<extension_sources_.size();++source)
-                    if(extension_sources_[source].extension_id==Utf8(extension.id)){source_index=static_cast<int>(source);break;}
+                    if(extension_sources_[source].extension_id==Utf8(extension.id)){source_index=static_cast<int>(source);source_path=extension_sources_[source].folder.wstring();break;}
+                const auto view_state=extension_state_for(i);
+                if(!ExtensionMatchesFilter(view_state,extension_view_filter_) || !ExtensionMatchesText(extension.name,extension.id,source_path,filter_text))continue;
+                ++visible_extensions;
                 const bool compact=(right-left)<D(690);
                 const RECT row{left,y,right,y+D(compact?174:116)};Rounded(dc,row,kSurface,kBorder,D(14));
                 const int text_right=static_cast<int>(row.right)-D(18);
                 Text(dc,extension.name,{row.left+D(18),row.top+D(8),text_right,row.top+D(35)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
                 const std::wstring state=extension.enabled?L"Enabled":L"Disabled";
-                std::wstring source_state=extension.id==ad_blocker_id_ ? L"  •  Built into WebCom" : L"  •  source not recorded";
-                bool source_needs_attention=false;
+                std::wstring source_state=extension.id==ad_blocker_id_
+                    ? L"  •  Built into WebCom  •  "+std::to_wstring(ad_blocker_site_exceptions_.size())+L" site exception"+(ad_blocker_site_exceptions_.size()==1?L"":L"s")
+                    : L"  •  source not recorded";
+                bool source_needs_attention=ExtensionNeedsAttention(view_state);
                 if(source_index>=0 && static_cast<std::size_t>(source_index)<extension_source_health_.size()){
                     const auto& health=extension_source_health_[static_cast<std::size_t>(source_index)];
-                    if(!health.manifest.valid){source_state=L"  •  source unavailable";source_needs_attention=true;}
-                    else if(!health.snapshot.available){source_state=L"  •  source scan unavailable";source_needs_attention=true;}
-                    else if(health.changed){source_state=L"  •  source changed • reload recommended";source_needs_attention=true;}
+                    if(!health.manifest.valid)source_state=L"  •  source unavailable";
+                    else if(!health.snapshot.available)source_state=L"  •  source scan unavailable";
+                    else if(health.changed)source_state=L"  •  source changed • reload recommended";
                     else if(!health.baseline_known)source_state=L"  •  source baseline pending • reload once";
                     else source_state=L"  •  source unchanged";
                 }
@@ -1029,23 +1279,38 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
                     const RECT button{x,button_top,x+D(width),button_top+D(36)};x=static_cast<int>(button.right)+D(8);
                     Rounded(dc,button,enabled&&hot_native_command_==command?kHover:kSurface,kBorder,D(10));
                     Text(dc,label,button,font_,enabled?kAccent:kMuted,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-                    if(enabled)add_action(button,command);
+                    if(enabled)add_action(button,command,label);
                 };
                 draw_extension_button(ExtensionDetailsBase+static_cast<UINT>(i),L"Details",92);
                 draw_extension_button(ExtensionToggleBase+static_cast<UINT>(i),extension.id==ad_blocker_id_ ? (extension.enabled?L"Turn off":L"Turn on") : (extension.enabled?L"Disable":L"Enable"),92,!extension_toggle_pending_);
+                if(extension.id==ad_blocker_id_ && !ad_blocker_site_exceptions_.empty())draw_extension_button(ClearAdBlockerSiteExceptions,L"Clear sites",104,!extension_toggle_pending_);
                 if(source_index>=0)draw_extension_button(ExtensionReloadBase+static_cast<UINT>(source_index),L"Reload",92);
                 if(source_index>=0)draw_extension_button(ExtensionOpenFolderBase+static_cast<UINT>(source_index),L"Open folder",110);
                 if(extension.id!=ad_blocker_id_)draw_extension_button(ExtensionRemoveBase+static_cast<UINT>(i),L"Remove",92);
                 y=static_cast<int>(row.bottom)+D(10);
             }
         }
+        if(!extensions_loading_ && visible_extensions==0){
+            const RECT empty{left,y,right,y+D(82)};Rounded(dc,empty,kSurface,kBorder,D(14));
+            const bool filtered=!filter_text.empty() || extension_view_filter_!=ExtensionViewFilter::All;
+            Text(dc,filtered?L"No extensions match this view":L"No installed extensions to show",{empty.left+D(18),empty.top+D(10),empty.right-D(18),empty.top+D(36)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+            Text(dc,filtered?L"Change the search text or filter to see other installed extensions.":(extension_sources_.empty()?L"Choose Load unpacked and select the top-level folder containing manifest.json. WebView2 references that folder directly, so keep it in place.":L"WebView2 currently reports no installed extensions. Saved unpacked sources are shown below so you can reload them if their files changed."),{empty.left+D(18),empty.top+D(38),empty.right-D(18),empty.bottom-D(10)},small_font_,kMuted,DT_LEFT|DT_TOP|DT_WORDBREAK|DT_NOPREFIX);
+            y=static_cast<int>(empty.bottom)+D(12);
+        }
+
         std::vector<std::size_t> missing_sources;
         for(std::size_t source=0;source<extension_sources_.size();++source){
             bool installed=false;
             for(const auto& extension:extensions_)if(Utf8(extension.id)==extension_sources_[source].extension_id){installed=true;break;}
-            if(!installed)missing_sources.push_back(source);
+            if(!installed){
+                const auto& record=extension_sources_[source];
+                std::wstring source_name=record.folder.filename().wstring();
+                if(source<extension_source_health_.size() && extension_source_health_[source].manifest.valid)
+                    source_name=Wide(extension_source_health_[source].manifest.name);
+                if(ExtensionMatchesText(source_name,Wide(record.extension_id),record.folder.wstring(),filter_text))missing_sources.push_back(source);
+            }
         }
-        if(!missing_sources.empty()){
+        if(!missing_sources.empty() && (extension_view_filter_==ExtensionViewFilter::All || extension_view_filter_==ExtensionViewFilter::NeedsAttention)){
             y+=D(8);
             Text(dc,L"Known unpacked sources not currently installed",{left,y,right,y+D(30)},heading_font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);y+=D(36);
             Text(dc,L"WebView2 can remove an unpacked extension when files inside its source folder change. WebCom keeps the source mapping so you can inspect or reload it explicitly.",{left,y,right,y+D(48)},small_font_,kMuted,DT_LEFT|DT_TOP|DT_WORDBREAK|DT_NOPREFIX);y+=D(56);
@@ -1073,7 +1338,7 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
                     const RECT button{x,button_top,x+D(width),button_top+D(34)};x=static_cast<int>(button.right)+D(8);
                     Rounded(dc,button,enabled&&hot_native_command_==command?kHover:kSurface,kBorder,D(10));
                     Text(dc,text,button,font_,enabled?kAccent:kMuted,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-                    if(enabled)add_action(button,command);
+                    if(enabled)add_action(button,command,text);
                 };
                 draw_source_button(ExtensionSourceDetailsBase+static_cast<UINT>(source_index),L"Details",92);
                 draw_source_button(ExtensionReloadBase+static_cast<UINT>(source_index),L"Reload source",112,loadable);
@@ -1083,6 +1348,45 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
             }
         }
         y+=D(12);
+    } else if (page == InternalPage::Passwords) {
+        const auto* credential_preferences = CurrentSavedProfile();
+        const bool save_passwords = credential_preferences ? credential_preferences->save_passwords : state_.save_passwords;
+        const bool general_autofill = credential_preferences ? credential_preferences->general_autofill : true;
+        draw_header(L"Passwords & Autofill", L"Profile-scoped credential preferences backed by the WebView2 profile. WebCom does not read, list, export, or display saved password values.");
+        const int row_height=D(78);
+        const struct CredentialRow { const wchar_t* title; std::wstring detail; UINT command; bool checked; } rows[]{
+            {L"Offer to save passwords", save_passwords ? L"On • WebView2 may offer to save sign-in credentials on normal tabs" : L"Off • existing saved credentials are not deleted", TogglePasswords, save_passwords},
+            {L"Autofill addresses and forms", general_autofill ? L"On • WebView2 may fill supported form fields on normal tabs" : L"Off • existing autofill data is not deleted", ToggleAutofill, general_autofill}
+        };
+        for(std::size_t i=0;i<std::size(rows);++i){
+            const RECT row{left,y+static_cast<int>(i)*row_height,right,y+static_cast<int>(i+1)*row_height-D(8)};
+            if(row.bottom<=content.top || row.top>=content.bottom)continue;
+            const bool hot=hot_native_command_==rows[i].command;
+            Rounded(dc,row,hot?kHover:kSurface,hot?MixChromeColor(kBorder,kAccent,25):kBorder,D(16));
+            Icon(dc,{row.left+D(20),row.top+D(22),row.left+D(46),row.top+D(48)},Glyph::Shield,rows[i].checked?kAccent:kMuted);
+            Text(dc,rows[i].title,{row.left+D(60),row.top+D(9),row.right-D(92),row.top+D(34)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+            Text(dc,rows[i].detail,{row.left+D(60),row.top+D(36),row.right-D(92),row.bottom-D(9)},small_font_,kMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+            const RECT state_rect{row.right-D(78),row.top+D(20),row.right-D(18),row.bottom-D(20)};
+            Text(dc,rows[i].checked?L"On":L"Off",state_rect,small_font_,rows[i].checked?kAccent:kMuted,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+            add_action(row,rows[i].command,rows[i].title);
+        }
+        y+=static_cast<int>(std::size(rows))*row_height+D(14);
+        Text(dc,L"Stored profile data",{left,y,right,y+D(32)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);y+=D(40);
+        const RECT info{left,y,right,y+D(118)};
+        if(info.bottom>content.top && info.top<content.bottom){
+            Rounded(dc,info,kSurface,kBorder,D(16));
+            Icon(dc,{info.left+D(20),info.top+D(22),info.left+D(46),info.top+D(48)},Glyph::Shield,kAccent);
+            Text(dc,L"Credential values stay in the WebView2 profile store",{info.left+D(60),info.top+D(14),info.right-D(20),info.top+D(42)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+            Text(dc,L"This WebView2 API exposes enable/disable and clear operations, not a safe list/decrypt interface for saved password values. Private tabs keep password saving and form autofill disabled.",
+                 {info.left+D(60),info.top+D(46),info.right-D(20),info.bottom-D(14)},small_font_,kMuted,DT_LEFT|DT_TOP|DT_WORDBREAK|DT_NOPREFIX);
+        }
+        y=info.bottom+D(18);
+        draw_button({left,y,left+D(214),y+D(34)},L"Clear saved passwords...",ClearSavedPasswords);
+        draw_button({left+D(224),y,left+D(458),y+D(34)},L"Clear autofill form data...",ClearAutofillData);
+        y+=D(54);
+        Text(dc,L"Clearing is confirmation-gated and affects this WebView2 profile only. It does not delete downloaded files, bookmarks, or WebCom History.",
+             {left,y,right,y+D(54)},small_font_,kMuted,DT_LEFT|DT_TOP|DT_WORDBREAK|DT_NOPREFIX);
+        y+=D(64);
     } else if (page == InternalPage::Settings) {
         draw_header(L"Settings", L"WebCom settings for the " + ProfileDisplayName(profile_name_,&appearance_) + L" profile. Changes save automatically.");
         struct SettingRow { const wchar_t* title; std::wstring detail; UINT command; Glyph glyph; };
@@ -1100,10 +1404,10 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
                     L"Open "+std::to_wstring(credential_preferences->startup_pages.size())+L" specific page"+(credential_preferences->startup_pages.size()==1?L"":L"s");
         }
         const std::array<SettingRow, 20> rows{{
-            {L"Appearance", appearance_.high_contrast ? L"High contrast chrome • profile appearance" : appearance_.reduce_motion ? L"Theme and profile color • reduced motion on" : L"Theme, profile color and visual preferences", AppearanceMenu, Glyph::Spark},
+            {L"Appearance", HighContrastActive() ? (system_high_contrast_?L"High contrast chrome • Windows High Contrast active":L"High contrast chrome • profile appearance") : ReducedMotionActive() ? (!system_animations_enabled_?L"Theme and profile color • Windows animations off":remote_session_?L"Theme and profile color • reduced motion in Remote Desktop":L"Theme and profile color • reduced motion on") : L"Theme, profile color and visual preferences", AppearanceMenu, Glyph::Spark},
             {L"Workspaces", std::to_wstring(workspaces_.size()) + L" workspace" + (workspaces_.size()==1?L"":L"s") + L" • current: " + active_workspace_, WorkspaceMenu, Glyph::Folder},
             {L"Tab layout", vertical_tabs_ ? (vertical_tabs_collapsed_ ? L"Vertical tabs • collapsed rail" : L"Vertical tabs • expanded rail") : L"Horizontal tabs • classic browser layout", ToggleVerticalTabs, Glyph::Folder},
-            {L"Performance", state_.memory_mode == MemoryMode::Saver ? L"Memory Saver • sleeps eligible tabs after 1 minute" : L"Balanced • sleeps eligible tabs after 5 minutes", ToggleSaver, Glyph::Reload},
+            {L"Performance", SleepTimeoutSettingsDetail(sleep_timeout_) + L" • " + std::to_wstring(never_sleep_hosts_.size()) + L" Never sleep site" + (never_sleep_hosts_.size() == 1 ? L"" : L"s"), PerformanceMenu, Glyph::Reload},
             {L"On startup", startup_detail, StartupMenu, Glyph::Reload},
             {L"Passwords and autofill", credential_detail, PasswordMenu, Glyph::Shield},
             {L"Profiles", std::to_wstring(state_.profiles.size()) + L" local profile" + (state_.profiles.size()==1?L"":L"s") + L" • multiple windows can run together", ProfileManager, Glyph::User},
@@ -1135,10 +1439,18 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
                  small_font_, kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
             if (rows[i].command) {
                 Icon(dc, {row.right - D(32), row.top + D(26), row.right - D(16), row.top + D(42)}, Glyph::Forward, kMuted);
-                add_action(row, rows[i].command);
+                add_action(row, rows[i].command, rows[i].title);
             }
         }
         y += static_cast<int>(rows.size()) * row_height + D(24);
+    }
+
+    if(focused_native_command_ && GetFocus()==window_) {
+        const auto focused=std::find_if(native_actions_.begin(),native_actions_.end(),[&](const NativeAction& action){return action.command==focused_native_command_;});
+        if(focused!=native_actions_.end()) {
+            RECT ring=focused->rect;InflateRect(&ring,-D(2),-D(2));
+            FocusOutline(dc,ring,D(10),D(2),kAccent);
+        } else focused_native_command_=0;
     }
 
     native_page_extent_ = std::max(0, y - origin + D(24));
@@ -1169,7 +1481,7 @@ bool BrowserApp::Impl::ScrollInternal(int delta) {
 
 bool BrowserApp::Impl::HitNativeAction(POINT point) {
     const auto* tab = Active();
-    if (!tab || tab->web || InternalPageFor(tab->url) == InternalPage::NewTab || InternalPageFor(tab->url) == InternalPage::None) return false;
+    if (!tab || tab->web || (InternalPageFor(tab->url) == InternalPage::None && !tab->failed)) return false;
     for (auto it=native_actions_.rbegin();it!=native_actions_.rend();++it) {
         if (it->command && PtInRect(&it->rect, point)) { Dispatch(it->command); return true; }
     }
@@ -1180,6 +1492,7 @@ void BrowserApp::Impl::Paint() {
     PAINTSTRUCT paint{};HDC output=BeginPaint(window_,&paint);
     RECT r{};GetClientRect(window_,&r);
     auto* tab=Active();
+    if (!tab || tab->web || tab->creating || (tab->private_mode && IsHome(tab->url))) native_actions_.clear();
     const int height=tab && tab->web?std::min(static_cast<int>(r.bottom),ContentTop()):static_cast<int>(r.bottom);
     if (height<=0) { native_chrome_.frame.Reset();EndPaint(window_,&paint);return; }
     HDC buffered=native_chrome_.frame.Begin(output,static_cast<int>(r.right),height);
@@ -1238,6 +1551,7 @@ void BrowserApp::Impl::Paint() {
                 {left+D(18),card.top+D(48),card.right-D(18),card.bottom-D(12)},font_,kMuted,
                 DT_LEFT|DT_TOP|DT_WORDBREAK|DT_NOPREFIX);
         } else if(IsHome(tab->url) && !tab->creating) {
+            native_actions_.clear();
             const auto layout=MakeChromeHomeLayout(content_width_dip,dip_height);
             const int top=content.top+D(layout.logo_top);
             const int content_center=content.left+static_cast<int>(content.right-content.left)/2;
@@ -1249,20 +1563,167 @@ void BrowserApp::Impl::Paint() {
             Rounded(dc,search,kSearch,GetFocus()==home_search_?kAccent:kBorder,D(52));
             if(GetFocus()==home_search_)FocusOutline(dc,search,D(52),D(1),kAccent);
             Icon(dc,{search.left+D(18),search.top+D(17),search.left+D(36),search.top+D(35)},Glyph::Search,kMuted);
+
+            const auto add_home_action=[&](RECT rect,UINT command,std::wstring_view name={}){
+                if(rect.bottom>content.top && rect.top<content.bottom)native_actions_.push_back({rect,command,std::wstring(name)});
+            };
+            const auto home_card=[&](RECT rect,UINT command,std::wstring_view title,std::wstring_view detail,Glyph glyph,bool accent=false){
+                if(rect.bottom<=content.top || rect.top>=content.bottom)return;
+                const bool hot=hot_native_command_==command;
+                const COLORREF fill=accent?MixChromeColor(kSurface,kAccent,hot?24:15):(hot?kHover:kSurface);
+                const COLORREF border=accent?MixChromeColor(kBorder,kAccent,hot?56:36):(hot?MixChromeColor(kBorder,kAccent,28):kBorder);
+                Rounded(dc,rect,fill,border,D(14));
+                Icon(dc,{rect.left+D(14),rect.top+D(14),rect.left+D(32),rect.top+D(32)},glyph,accent?kAccent:kMuted);
+                Text(dc,std::wstring(title),{rect.left+D(42),rect.top+D(8),rect.right-D(10),rect.top+D(31)},small_font_,hot?kInk:kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+                if(!detail.empty())Text(dc,std::wstring(detail),{rect.left+D(42),rect.top+D(30),rect.right-D(10),rect.bottom-D(5)},small_font_,kMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+                add_home_action(rect,command,title);
+            };
+            const auto home_small_action=[&](RECT rect,UINT command,std::wstring_view label,bool accent=false,std::wstring_view accessible_name={}){
+                if(rect.bottom<=content.top || rect.top>=content.bottom)return;
+                const bool hot=hot_native_command_==command;
+                Rounded(dc,rect,hot?kHover:kSurface,accent?kAccent:kBorder,D(11));
+                Text(dc,std::wstring(label),rect,small_font_,accent?kAccent:(hot?kInk:kMuted),DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+                add_home_action(rect,command,accessible_name.empty()?label:accessible_name);
+            };
+
+            const int panel_width=std::min(D(760),static_cast<int>(content.right-content.left)-D(48));
+            const int panel_left=content_center-panel_width/2;
+            int dashboard_top=content.top+D(layout.shortcut_top+102);
+            if(dip_height>=430){
+                constexpr std::array<std::pair<const wchar_t*,UINT>,4> quick{{
+                    {L"History",History},{L"Downloads",Downloads},{L"Bookmarks",BookmarkManager},{L"Sessions",SessionsManager}
+                }};
+                const int gap=D(8),chip=(panel_width-gap*3)/4;
+                for(int i=0;i<4;++i){
+                    const RECT rect{panel_left+i*(chip+gap),dashboard_top,panel_left+i*(chip+gap)+chip,dashboard_top+D(34)};
+                    const bool hot=hot_native_command_==quick[static_cast<std::size_t>(i)].second;
+                    Rounded(dc,rect,hot?kHover:kSurface,hot?MixChromeColor(kBorder,kAccent,30):kBorder,D(17));
+                    Text(dc,quick[static_cast<std::size_t>(i)].first,rect,small_font_,hot?kInk:kMuted,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+                    add_home_action(rect,quick[static_cast<std::size_t>(i)].second,quick[static_cast<std::size_t>(i)].first);
+                }
+                dashboard_top+=D(48);
+            }
+
+            if(dip_height>=500){
+                Text(dc,L"Your shortcuts",{panel_left,dashboard_top,panel_left+D(160),dashboard_top+D(24)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+                const std::wstring shortcut_hint=std::to_wstring(home_preferences_.shortcuts.size())+L" of "+std::to_wstring(kMaxHomeShortcuts);
+                Text(dc,shortcut_hint,{panel_left+D(116),dashboard_top,panel_left+panel_width,dashboard_top+D(24)},small_font_,kMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+                dashboard_top+=D(28);
+                const std::size_t visible_shortcuts=std::min<std::size_t>(home_preferences_.shortcuts.size(),dip_height>=860?8:4);
+                const bool can_add=home_preferences_.shortcuts.size()<kMaxHomeShortcuts;
+                const int count=static_cast<int>(visible_shortcuts)+(can_add?1:0);
+                if(count>0){
+                    const int columns=std::min(4,count),gap=D(10),card=(panel_width-gap*(columns-1))/columns;
+                    for(std::size_t i=0;i<visible_shortcuts;++i){
+                        const int row=static_cast<int>(i)/columns,col=static_cast<int>(i)%columns;
+                        const RECT rect{panel_left+col*(card+gap),dashboard_top+row*D(64),panel_left+col*(card+gap)+card,dashboard_top+row*D(64)+D(54)};
+                        const auto& shortcut=home_preferences_.shortcuts[i];
+                        home_card(rect,HomeShortcutBase+static_cast<UINT>(i),Wide(shortcut.title),HomeDisplayHost(Wide(shortcut.url)),Glyph::Globe,false);
+                        const RECT remove{rect.right-D(28),rect.top+D(7),rect.right-D(7),rect.top+D(28)};
+                        home_small_action(remove,HomeShortcutRemoveBase+static_cast<UINT>(i),L"×",false,L"Remove shortcut");
+                    }
+                    if(can_add){
+                        const int slot=static_cast<int>(visible_shortcuts);
+                        const int row=slot/columns,col=slot%columns;
+                        const RECT rect{panel_left+col*(card+gap),dashboard_top+row*D(64),panel_left+col*(card+gap)+card,dashboard_top+row*D(64)+D(54)};
+                        home_card(rect,AddHomeShortcutCmd,L"Add shortcut",L"Choose a website",Glyph::Plus,true);
+                    }
+                    const int rows=(count+columns-1)/columns;
+                    dashboard_top+=D(rows*64+6);
+                }
+            }
+
+            if(dip_height>=600){
+                const auto recent=VisibleHomeRecentSites(dip_height>=760?6:3);
+                if(!recent.empty()){
+                    Text(dc,L"Recent",{panel_left,dashboard_top,panel_left+D(120),dashboard_top+D(24)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+                    Text(dc,L"From your WebCom history",{panel_left+D(78),dashboard_top,panel_left+panel_width,dashboard_top+D(24)},small_font_,kMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+                    dashboard_top+=D(28);
+                    const int columns=3,gap=D(10),card=(panel_width-gap*(columns-1))/columns;
+                    for(std::size_t i=0;i<recent.size();++i){
+                        const int row=static_cast<int>(i)/columns,col=static_cast<int>(i)%columns;
+                        const RECT rect{panel_left+col*(card+gap),dashboard_top+row*D(68),panel_left+col*(card+gap)+card,dashboard_top+row*D(68)+D(58)};
+                        home_card(rect,HomeRecentBase+static_cast<UINT>(i),recent[i].title,recent[i].host,Glyph::Globe,false);
+                        const RECT pin{rect.right-D(52),rect.top+D(7),rect.right-D(31),rect.top+D(28)};
+                        const RECT hide{rect.right-D(27),rect.top+D(7),rect.right-D(6),rect.top+D(28)};
+                        home_small_action(pin,HomeRecentPinBase+static_cast<UINT>(i),L"+",true,L"Pin recent site");
+                        home_small_action(hide,HomeRecentHideBase+static_cast<UINT>(i),L"×",false,L"Hide recent site");
+                    }
+                    dashboard_top+=D(recent.size()>3?136:68);
+                }
+            }
+
+            if(dip_height>=700){
+                Text(dc,L"Workspaces",{panel_left,dashboard_top,panel_left+D(150),dashboard_top+D(24)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+                const std::wstring workspace_hint=std::to_wstring(workspaces_.size())+L" space"+(workspaces_.size()==1?L"":L"s");
+                Text(dc,workspace_hint,{panel_left+D(104),dashboard_top,panel_left+panel_width-D(118),dashboard_top+D(24)},small_font_,kMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+                const RECT manage{panel_left+panel_width-D(108),dashboard_top-D(4),panel_left+panel_width,dashboard_top+D(28)};
+                Rounded(dc,manage,hot_native_command_==WorkspaceMenu?kHover:kSurface,kBorder,D(16));
+                Text(dc,L"Manage",manage,small_font_,hot_native_command_==WorkspaceMenu?kInk:kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+                add_home_action(manage,WorkspaceMenu,L"Manage workspaces");
+                dashboard_top+=D(30);
+
+                std::vector<std::size_t> workspace_indices;
+                workspace_indices.reserve(std::min<std::size_t>(4,workspaces_.size()));
+                for(std::size_t i=0;i<workspaces_.size();++i)if(_wcsicmp(Wide(workspaces_[i].name).c_str(),active_workspace_.c_str())==0){workspace_indices.push_back(i);break;}
+                for(std::size_t i=0;i<workspaces_.size() && workspace_indices.size()<4;++i)
+                    if(workspace_indices.empty() || i!=workspace_indices.front())workspace_indices.push_back(i);
+                const bool can_add=workspace_indices.size()<4 && workspaces_.size()<32;
+                const int count=static_cast<int>(workspace_indices.size())+(can_add?1:0);
+                if(count>0){
+                    const int gap=D(10),card=(panel_width-gap*(count-1))/count;
+                    for(std::size_t slot=0;slot<workspace_indices.size();++slot){
+                        const auto index=workspace_indices[slot];
+                        const auto name=Wide(workspaces_[index].name);
+                        const bool active=_wcsicmp(name.c_str(),active_workspace_.c_str())==0;
+                        const auto tab_count=static_cast<std::size_t>(std::count_if(tabs_.begin(),tabs_.end(),[&](const auto& item){return _wcsicmp(item->workspace.c_str(),name.c_str())==0;}));
+                        const std::wstring detail=std::to_wstring(tab_count)+L" tab"+(tab_count==1?L"":L"s")+(active?L" • active":L"");
+                        const RECT rect{panel_left+static_cast<int>(slot)*(card+gap),dashboard_top,panel_left+static_cast<int>(slot)*(card+gap)+card,dashboard_top+D(56)};
+                        home_card(rect,WorkspaceBase+static_cast<UINT>(index),name,detail,Glyph::Folder,active);
+                    }
+                    if(can_add){
+                        const int slot=static_cast<int>(workspace_indices.size());
+                        const RECT rect{panel_left+slot*(card+gap),dashboard_top,panel_left+slot*(card+gap)+card,dashboard_top+D(56)};
+                        home_card(rect,AddWorkspace,L"New workspace",L"Create a separate tab space",Glyph::Plus,true);
+                    }
+                }
+            }
         } else if (IsInternalPage(tab->url) && !tab->creating) {
             PaintInternalPage(dc, content, *tab);
         } else {
-            const int card_width=std::min(D(600),static_cast<int>(r.right)-D(64));
-            const int left=(r.right-card_width)/2,top=content.top+D(std::clamp((dip_height-300)/4,36,96));
+            native_actions_.clear();
+            const int card_width=std::min(D(660),static_cast<int>(r.right)-D(64));
+            const int left=(r.right-card_width)/2,top=content.top+D(std::clamp((dip_height-360)/4,32,88));
             const RECT disc{r.right/2-D(28),top,r.right/2+D(28),top+D(56)};
             Rounded(dc,disc,kSurface,kBorder,D(56));
             Icon(dc,{disc.left+D(15),disc.top+D(15),disc.right-D(15),disc.bottom-D(15)},
                 tab->failed?Glyph::Globe:Glyph::Reload,tab->failed?kMuted:kAccent);
-            Text(dc,tab->failed?L"This tab couldn’t open":L"Opening your page…",
-                {left,top+D(80),left+card_width,top+D(118)},heading_font_,kInk,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
-            Text(dc,tab->failed?tab->error:L"Your page is loading. You can keep using the address bar and other tabs.",
-                {left,top+D(138),left+card_width,content.top+D(std::max(250,std::min(330,dip_height-84)))},font_,kMuted,
-                DT_CENTER|DT_TOP|DT_WORDBREAK|DT_NOPREFIX);
+            Text(dc,tab->failed?L"This page couldn’t be opened":L"Opening your page…",
+                {left,top+D(76),left+card_width,top+D(116)},heading_font_,kInk,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+            if(tab->failed){
+                const std::wstring address=tab->url.size()>180?tab->url.substr(0,177)+L"…":tab->url;
+                Text(dc,address,{left+D(24),top+D(124),left+card_width-D(24),top+D(154)},small_font_,kMuted,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+                const std::wstring detail=tab->error.empty()?L"Check your connection and the address, then try again.":tab->error;
+                Text(dc,detail,{left+D(30),top+D(166),left+card_width-D(30),top+D(224)},font_,kMuted,DT_CENTER|DT_TOP|DT_WORDBREAK|DT_NOPREFIX);
+                const int gap=D(10),button_width=std::min(D(150),(card_width-gap*2-D(24))/3);
+                const int total=button_width*3+gap*2;const int button_left=(r.right-total)/2;const int button_top=top+D(244);
+                const auto failed_button=[&](RECT rect,UINT command,const wchar_t* label,bool accent=false){
+                    const bool hot=hot_native_command_==command;
+                    Rounded(dc,rect,accent?MixChromeColor(kSurface,kAccent,hot?30:18):(hot?kHover:kSurface),
+                        accent?MixChromeColor(kBorder,kAccent,52):kBorder,D(16));
+                    Text(dc,label,rect,small_font_,accent?kAccent:(hot?kInk:kMuted),DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+                    native_actions_.push_back({rect,command,label});
+                };
+                failed_button({button_left,button_top,button_left+button_width,button_top+D(38)},Reload,L"Try again",true);
+                failed_button({button_left+button_width+gap,button_top,button_left+button_width*2+gap,button_top+D(38)},FocusAddress,L"Edit address");
+                failed_button({button_left+(button_width+gap)*2,button_top,button_left+button_width*3+gap*2,button_top+D(38)},NewTab,L"New Tab");
+                Text(dc,L"WebCom keeps this failure page native so a broken site cannot replace the browser recovery controls.",
+                    {left+D(26),button_top+D(52),left+card_width-D(26),button_top+D(86)},small_font_,kMuted,DT_CENTER|DT_TOP|DT_WORDBREAK|DT_NOPREFIX);
+            }else{
+                Text(dc,L"Your page is loading. You can keep using the address bar and other tabs.",
+                    {left,top+D(138),left+card_width,content.top+D(std::max(250,std::min(330,dip_height-84)))},font_,kMuted,
+                    DT_CENTER|DT_TOP|DT_WORDBREAK|DT_NOPREFIX);
+            }
         }
         RestoreDC(dc,saved_dc);
     }
@@ -1420,7 +1881,7 @@ void BrowserApp::Impl::DrawItem(const DRAWITEMSTRUCT& source) {
 RECT BrowserApp::Impl::DisplayTabRect(std::size_t index) const {
     if (index >= tab_rects_.size() || index >= tabs_.size()) return {};
     const RECT target = tab_rects_[index];
-    if (appearance_.reduce_motion || !tab_reflow_start_ || tab_reflow_from_.empty()) return target;
+    if (ReducedMotionActive() || !tab_reflow_start_ || tab_reflow_from_.empty()) return target;
     const auto now = GetTickCount64();
     const auto elapsed = now > tab_reflow_start_ ? now - tab_reflow_start_ : 0;
     constexpr std::uint64_t duration = 160;
@@ -1575,7 +2036,7 @@ void BrowserApp::Impl::PaintTabs() {
         const RECT r=DisplayTabRect(i);if(r.right<=r.left || r.left>=bounds.right)return;
         const auto& tab=*tabs_[i];const bool selected=i==active_,hot=static_cast<int>(i)==hot_tab_;
         unsigned hover_amount=hot?100u:0u;
-        if(!appearance_.reduce_motion && hover_animation_start_)
+        if(!ReducedMotionActive() && hover_animation_start_)
             hover_amount=ChromeHoverAmount(static_cast<int>(i),hover_animation_from_,hover_animation_to_,
                 GetTickCount64()-hover_animation_start_);
         const bool dragged=tab_dragging_ && tab.id==dragged_tab_id_;
@@ -1592,7 +2053,7 @@ void BrowserApp::Impl::PaintTabs() {
             p.CloseFigure();
             COLORREF fill=kFrame;
             if(dragged) fill=MixChromeColor(kFrame,kCaption,28);
-            else if(!appearance_.reduce_motion && tab_transition_until_){
+            else if(!ReducedMotionActive() && tab_transition_until_){
                 const auto now=GetTickCount64();
                 const auto remaining=tab_transition_until_>now?tab_transition_until_-now:0;
                 const unsigned progress=static_cast<unsigned>(100-std::min<std::uint64_t>(100,remaining*100/140));
@@ -1858,7 +2319,7 @@ void BrowserApp::Impl::BookmarksMenu(POINT anchor,int context) {
     }
     UINT selected=0;
     { menu_open_=true;struct Reset{bool& value;~Reset(){value=false;}}reset{menu_open_};
-      selected=ShowDarkMenu(owner,anchor,items,dpi_,context_menu?330:350,!context_menu,&palette_); }
+      selected=ShowDarkMenu(owner,anchor,items,dpi_,context_menu?330:350,!context_menu,&palette_,ReducedMotionActive()); }
     if (!selected || closing_ || !IsWindow(owner) || window_!=owner || profile_name_!=profile) return;
     if(context_menu){
         const auto index=static_cast<std::size_t>(context);
@@ -1890,9 +2351,11 @@ void BrowserApp::Impl::ShowQuickCommands() {
     };
     add(NewTab,L"New tab",L"Ctrl+T");
     add(PrivateTab,L"New Incognito tab",L"Ctrl+Shift+N");
-    add(ReopenTab,L"Reopen closed tab",L"Ctrl+Shift+T",!closed_tabs_.empty());
+    add(ReopenTab,L"Reopen closed tab",L"Ctrl+Shift+T",true);
     add(OpenFile,L"Open local HTML or PDF",L"Ctrl+O");
     add(TabList,L"Search open tabs",L"Ctrl+Shift+A");
+    add(CloseDuplicateTabs,L"Close duplicate tabs",L"Current workspace • protects active, pinned and downloading tabs",tab!=nullptr);
+    add(SleepOtherTabs,L"Sleep other tabs",L"Current workspace • uses normal sleep safety rules",tab!=nullptr);
     add(WorkspaceMenu,L"Switch or manage workspaces",active_workspace_.c_str());
     add(StartupMenu,L"On startup",L"Continue, New Tab, or specific pages");
     add(PreviousWorkspace,L"Previous workspace",L"Ctrl+Alt+Left",workspaces_.size()>1);
@@ -1907,8 +2370,10 @@ void BrowserApp::Impl::ShowQuickCommands() {
     add(CapturePage,L"Capture screenshot...",L"Visible area or full page • Ctrl+Shift+S",page);
     add(History,L"Open History",L"Ctrl+H");
     add(Downloads,L"Open Downloads",L"Ctrl+J");
+    add(RetryFailedDownloads,L"Retry failed downloads",L"Resume current failures or reopen up to five validated source pages");
     add(BookmarkManager,L"Open Bookmark manager",L"Ctrl+Shift+O");
     add(ProfileManager,L"Manage profiles",L"Profiles");
+    add(PerformanceMenu,L"Performance controls",SleepTimeoutSettingsDetail(sleep_timeout_));
     add(ExtensionsPage,L"Extensions",L"Load/manage unpacked Chromium extensions");
     add(SettingsMenu,L"Open Settings",L"Settings");
     add(WelcomePage,L"Getting started",L"Default browser, privacy and shortcuts");
@@ -2195,7 +2660,7 @@ void BrowserApp::Impl::CaptureMenuPopup() {
     {
         menu_open_=true;
         struct Reset{bool& value;~Reset(){value=false;}} reset{menu_open_};
-        selected=ShowDarkMenu(window_,anchor,items,dpi_,380,false,&palette_);
+        selected=ShowDarkMenu(window_,anchor,items,dpi_,380,false,&palette_,ReducedMotionActive());
     }
     if(selected && !closing_) Dispatch(selected);
 }
@@ -2386,7 +2851,7 @@ void BrowserApp::Impl::OpenTabsMenu() {
     {
         menu_open_=true;
         struct Reset {bool& value;~Reset(){value=false;}} reset{menu_open_};
-        selected=ShowTabSearch(owner,{r.left,r.bottom+D(6)},items,dpi_,&palette_);
+        selected=ShowTabSearch(owner,{r.left,r.bottom+D(6)},items,dpi_,&palette_,ReducedMotionActive());
     }
     if(closing_ || !IsWindow(owner) || !selected)return;
     for(std::size_t i=0;i<tabs_.size();++i)if(tabs_[i]->id==selected){Select(i);break;}

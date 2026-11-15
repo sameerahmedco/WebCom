@@ -1,11 +1,9 @@
 #pragma once
 
 #include <windows.h>
+#include <filesystem>
 #include <memory>
 #include <string>
-#ifdef WEBCOM_TEST_MODE
-#include <filesystem>
-#endif
 
 namespace webcom {
 
@@ -13,9 +11,9 @@ namespace webcom {
 class BrowserApp {
 public:
     explicit BrowserApp(HINSTANCE instance);
-#ifdef WEBCOM_TEST_MODE
+    // Used by the native UI harness and the WEBCOM_QA_MODE-gated Windows
+    // acceptance launch. Normal product launches always use DataDirectory().
     BrowserApp(HINSTANCE instance, const std::filesystem::path& isolated_data_root);
-#endif
     ~BrowserApp();
     BrowserApp(const BrowserApp&) = delete;
     BrowserApp& operator=(const BrowserApp&) = delete;
