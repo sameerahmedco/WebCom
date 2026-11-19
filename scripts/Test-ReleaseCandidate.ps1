@@ -41,7 +41,10 @@ if (-not $PreviousInstaller -and -not $NoPreviousSignedBuild) { Fail 'supply Pre
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $currentInstallerPath = Resolve-File $CurrentInstaller 'current installer'
-$signedDistReportPath = Resolve-File (Join-Path (Split-Path -Parent $currentInstallerPath) 'signed-dist-verification.json') 'signed dist verification report'
+$releaseDirectory = Split-Path -Parent $currentInstallerPath
+$signedDistReportPath = Resolve-File (Join-Path $releaseDirectory 'signed-dist-verification.json') 'signed dist verification report'
+$provenancePath = Resolve-File (Join-Path $releaseDirectory 'release-provenance.json') 'release provenance report'
+$sbomPath = Resolve-File (Join-Path $releaseDirectory 'webcom.spdx.json') 'SPDX SBOM'
 $stableManifestPath = Resolve-File $StableManifest 'stable manifest'
 $previousInstallerPath = ''
 if ($PreviousInstaller) { $previousInstallerPath = Resolve-File $PreviousInstaller 'previous installer' }
@@ -73,6 +76,31 @@ if ($signedDist.authenticodeStatus -ne 'Valid') { Fail "signed dist executable A
 if ($signedDist.publisherSha256 -ne $ExpectedPublisherSha256.ToLowerInvariant()) { Fail 'signed dist publisher fingerprint does not match the Release Candidate publisher pin' }
 if ($signedDist.version -ne $ExpectedVersion) { Fail "signed dist version is '$($signedDist.version)', expected $ExpectedVersion" }
 if (-not $signedDist.uiHarnessPresent -or [int]$signedDist.sourceManifestEntries -lt 100) { Fail 'signed dist verification is missing UI-harness or source-manifest evidence' }
+if (-not [bool]$signedDist.dependencyVerification.officialHashVerified) { Fail 'signed dist verification is missing official WebView2 package hash evidence' }
+
+Write-Host '=== Gate 0b/4: source/dependency provenance + SPDX SBOM ===' -ForegroundColor Cyan
+$provenance = Get-Content -LiteralPath $provenancePath -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($provenance.schema -ne 'webcom-release-provenance-v1') { Fail 'release provenance has an unexpected schema' }
+if ($provenance.version -ne $ExpectedVersion) { Fail "release provenance version is '$($provenance.version)', expected $ExpectedVersion" }
+$currentInstallerHashEarly = (Get-FileHash -LiteralPath $currentInstallerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$stableManifestHashEarly = (Get-FileHash -LiteralPath $stableManifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$signedDistHash = (Get-FileHash -LiteralPath $signedDistReportPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$sourceManifestHash = (Get-FileHash -LiteralPath (Join-Path $repositoryRoot 'docs\source-hashes.sha256') -Algorithm SHA256).Hash.ToLowerInvariant()
+$dependencyLockHash = (Get-FileHash -LiteralPath (Join-Path $repositoryRoot 'dependencies.lock.json') -Algorithm SHA256).Hash.ToLowerInvariant()
+$sbomHash = (Get-FileHash -LiteralPath $sbomPath -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($provenance.installer.sha256 -ne $currentInstallerHashEarly) { Fail 'release provenance installer hash does not match CurrentInstaller' }
+if ($provenance.releaseManifest.sha256 -ne $stableManifestHashEarly) { Fail 'release provenance manifest hash does not match StableManifest' }
+if ($provenance.signedDist.reportSha256 -ne $signedDistHash -or $provenance.signedDist.executableSha256 -ne $signedDist.executable.sha256) { Fail 'release provenance signed-dist identity does not match signed package evidence' }
+if ($provenance.source.manifestSha256 -ne $sourceManifestHash) { Fail 'release provenance source-manifest hash does not match this source tree' }
+if ($provenance.dependencyLock.sha256 -ne $dependencyLockHash -or $provenance.dependencyLock.sha256 -ne $signedDist.dependencyLockSha256) { Fail 'release provenance dependency-lock identity is inconsistent' }
+if (-not [bool]$provenance.webView2.officialHashVerified -or $provenance.webView2.version -ne $signedDist.dependencyVerification.version) { Fail 'release provenance WebView2 verification evidence is incomplete' }
+if ($provenance.sbom.sha256 -ne $sbomHash -or $provenance.sbom.format -ne 'SPDX-2.3') { Fail 'release provenance SBOM identity is inconsistent' }
+$sbom = Get-Content -LiteralPath $sbomPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($sbom.spdxVersion -ne 'SPDX-2.3' -or $sbom.dataLicense -ne 'CC0-1.0') { Fail 'SBOM is not the expected SPDX 2.3 document' }
+$sbomWebCom = @($sbom.packages | Where-Object { $_.SPDXID -eq 'SPDXRef-Package-WebCom' })
+$sbomWebView2 = @($sbom.packages | Where-Object { $_.SPDXID -eq 'SPDXRef-Package-WebView2' })
+if ($sbomWebCom.Count -ne 1 -or $sbomWebCom[0].versionInfo -ne $ExpectedVersion) { Fail 'SBOM WebCom package identity/version is invalid' }
+if ($sbomWebView2.Count -ne 1 -or $sbomWebView2[0].versionInfo -ne $signedDist.dependencyVerification.version) { Fail 'SBOM WebView2 package identity/version is invalid' }
 
 Write-Host '=== Gate 1/4: clean Windows/MSVC/WebView2 acceptance ===' -ForegroundColor Cyan
 $acceptanceArgs = @{
@@ -166,7 +194,8 @@ $summary = [ordered]@{
     schema = 'webcom-release-candidate-v1'
     generatedAt = (Get-Date).ToString('o')
     version = $ExpectedVersion
-    readyForPublicBeta = $true
+    readyForPublicBeta = $true # backwards-compatible field for older tooling
+    readyForPublicReleaseReview = $true
     memoryGate = [ordered]@{
         required = (-not $SkipMemoryGate)
         workingSetBudgetMiB = $(if ($SkipMemoryGate) { 0 } else { $WorkingSetBudgetMiB })
@@ -176,6 +205,7 @@ $summary = [ordered]@{
     stableManifest = [ordered]@{ path = $stableManifestPath; sha256 = $stableManifestHash }
     gates = [ordered]@{
         signedBuildPackage = [ordered]@{ status = 'passed'; report = (Report-Ref $signedDistReportPath); executableSha256 = $signedDist.executable.sha256 }
+        supplyChain = [ordered]@{ status = 'passed'; provenance = (Report-Ref $provenancePath); sbom = (Report-Ref $sbomPath); dependencyLockSha256 = $dependencyLockHash }
         windowsAcceptance = [ordered]@{ status = 'passed'; report = (Report-Ref $windowsReport) }
         releaseMatrix = [ordered]@{ status = 'passed'; report = (Report-Ref $matrixReport) }
         freshInstall = [ordered]@{ status = 'passed'; report = (Report-Ref $freshReport) }

@@ -70,15 +70,28 @@ int main(){
     std::error_code ec; std::filesystem::remove_all(root,ec);
     Check(LoadUpdateSettings(root).channel==ReleaseChannel::Stable,"missing settings default stable");
     Check(!LoadUpdateSettings(root).checks_enabled,"missing settings default update checks off");
-    Check(SaveUpdateSettings(root,{ReleaseChannel::Beta,true},&error),"beta update setting saves");
+    Check(!LoadUpdateSettings(root).automatic_downloads,"missing settings default automatic downloads off");
+    Check(SaveUpdateSettings(root,{ReleaseChannel::Beta,true,true},&error),"beta automatic-update setting saves");
     const auto settings=LoadUpdateSettings(root);
-    Check(settings.channel==ReleaseChannel::Beta && settings.checks_enabled,"beta channel and update-check consent round trip");
+    Check(settings.channel==ReleaseChannel::Beta && settings.checks_enabled && settings.automatic_downloads,
+          "beta channel, update-check consent and verified automatic-download preference round trip");
     {
         std::ofstream older_settings(root / "updates.v1", std::ios::binary | std::ios::trunc);
         older_settings << "WEBCOM_UPDATES\t1\nchannel\tstable\n";
     }
     const auto migrated=LoadUpdateSettings(root);
-    Check(migrated.channel==ReleaseChannel::Stable && !migrated.checks_enabled,"v1 settings migrate with checks disabled");
+    Check(migrated.channel==ReleaseChannel::Stable && !migrated.checks_enabled && !migrated.automatic_downloads,
+          "v1 settings migrate with checks and automatic downloads disabled");
+    {
+        std::ofstream v2_settings(root / "updates.v1", std::ios::binary | std::ios::trunc);
+        v2_settings << "WEBCOM_UPDATES\t2\nchannel\tstable\nchecks_enabled\t1\n";
+    }
+    const auto migrated_v2=LoadUpdateSettings(root);
+    Check(migrated_v2.channel==ReleaseChannel::Stable && migrated_v2.checks_enabled && !migrated_v2.automatic_downloads,
+          "v2 settings retain check consent but do not silently enable automatic downloads");
+    Check(SaveUpdateSettings(root,{ReleaseChannel::Stable,false,true},&error),"disabled checks normalize automatic downloads off when saved");
+    const auto normalized=LoadUpdateSettings(root);
+    Check(!normalized.checks_enabled && !normalized.automatic_downloads,"automatic downloads cannot remain enabled without update checks");
 
     UpdateTransaction transaction;
     Check(parsed && StageVerifiedUpdate(transaction,*parsed,"1.9.9",&error),"verified signed update can be staged");
@@ -89,6 +102,14 @@ int main(){
     UpdateTransaction stable_prerelease_transaction;
     Check(parsed_bad_stable_prerelease && !StageVerifiedUpdate(stable_prerelease_transaction,*parsed_bad_stable_prerelease,"1.9.9",&error),"stable prerelease manifest cannot be staged");
     Check(MarkUpdateInstallScheduled(transaction,&error) && transaction.phase==UpdateTransactionPhase::InstallScheduled,"verified package can be scheduled");
+    {
+        auto cancelled=transaction;
+        Check(!RevertIncompleteScheduledInstall(cancelled,"2.0.0",&error),"scheduled install cannot revert while target version is running");
+        Check(RevertIncompleteScheduledInstall(cancelled,"1.9.9",&error) && cancelled.phase==UpdateTransactionPhase::VerifiedPackage,
+              "cancelled or incomplete install returns to verified staged state on previous version");
+        Check(cancelled.target_version=="2.0.0" && cancelled.previous_version=="1.9.9" && cancelled.package_size==transaction.package_size,
+              "incomplete install reconciliation preserves verified package metadata");
+    }
     Check(MarkUpdateAwaitingHealthCheck(transaction,&error) && transaction.phase==UpdateTransactionPhase::AwaitingHealthCheck,"scheduled install enters health-check state");
     Check(!UpdateRollbackRecommended(transaction),"rollback is not recommended before repeated health failures");
     Check(RecordUpdateHealthFailure(transaction,&error),"first update health failure records");

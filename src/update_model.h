@@ -13,9 +13,11 @@ enum class PackageSignatureKind { None, Authenticode };
 
 struct UpdateSettings {
     ReleaseChannel channel = ReleaseChannel::Stable;
-    // Update checks are opt-in. WebCom never downloads or installs merely
-    // because a release channel is selected.
+    // Update checks are opt-in. Selecting a channel alone never contacts it.
     bool checks_enabled = false;
+    // Verified installer downloads are separately opt-in. WebCom never launches
+    // an installer automatically; installation always remains user-controlled.
+    bool automatic_downloads = false;
     bool operator==(const UpdateSettings&) const = default;
 };
 
@@ -55,6 +57,8 @@ std::string UpdateTransactionPhaseName(UpdateTransactionPhase phase);
 bool StageVerifiedUpdate(UpdateTransaction& state, const UpdateManifest& manifest,
                          std::string_view current_version, std::string* error = nullptr);
 bool MarkUpdateInstallScheduled(UpdateTransaction& state, std::string* error = nullptr);
+bool RevertIncompleteScheduledInstall(UpdateTransaction& state, std::string_view running_version,
+                                      std::string* error = nullptr);
 bool MarkUpdateAwaitingHealthCheck(UpdateTransaction& state, std::string* error = nullptr);
 bool MarkUpdateHealthy(UpdateTransaction& state, std::string_view running_version,
                        std::string* error = nullptr);

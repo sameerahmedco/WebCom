@@ -213,7 +213,7 @@ Do not treat a successful compile as the only release check. At minimum, test:
 - update/rollback verification for signed release builds;
 - memory usage with the included measurement script.
 
-See `docs/PUBLIC-BETA-CHECKLIST.md`, `docs/VALIDATION.md`, and `docs/MEMORY-ACCEPTANCE.md` for the current release boundary and repeatable memory scenarios.
+See `docs/PUBLIC-RELEASE-CHECKLIST.md`, `docs/VALIDATION.md`, and `docs/MEMORY-ACCEPTANCE.md` for the current release boundary and repeatable memory scenarios.
 
 ## 11. Release and installer tooling
 
@@ -255,4 +255,11 @@ If no previous signed WebCom build has ever existed, use `-NoPreviousSignedBuild
 A normal `build.cmd` now verifies the staged `dist\WebCom` package before creating the portable ZIP. For signed releases, `Build-SignedInstaller.ps1` performs the same integrity check before signing and again afterward, producing `signed-dist-verification.json`. Do not move or discard that report before `Test-ReleaseCandidate.ps1`; the RC gate uses it to prove the installer contains the exact signed `WebCom.exe` that passed staged-package verification.
 
 See `docs/BUILD-PACKAGE-INTEGRITY.md`.
+
+
+## Release dependency lock, SBOM and provenance
+
+For public/signed builds, do not bypass the locked WebView2 restore. `Build-ReleaseCandidate.ps1` enables strict dependency verification, requires the NuGet package SHA-512 to match official catalog metadata, and emits both `webcom.spdx.json` and `release-provenance.json`. These files must remain beside the installer for Release Candidate sign-off. See `docs/SUPPLY-CHAIN.md`.
+PUBLIC RELEASE OPERATIONS (LATEST-47):
+Use scripts\Invoke-PublicRelease.ps1 from elevated Windows PowerShell to run build -> mandatory RC -> approval -> evidence in one fail-closed flow. It does not upload anything. After manually publishing the approved installer/Stable manifest, run scripts\Test-PublishedRelease.ps1 and archive its checksummed health report. See docs\POST-RELEASE.md.
 

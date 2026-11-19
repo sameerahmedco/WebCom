@@ -1,6 +1,6 @@
 # WebCom v3 Release Candidate gate
 
-Latest-39 adds a single Windows Release Candidate workflow that combines the source/runtime gate with signed-installer and signed-update-package checks. Latest-40 kept that gate unchanged while hardening Windows accessibility/DPI policy; Latest-41 keeps the same gate and adds MSAA semantics for painted native-page actions while preserving the standard Win32 client accessibility tree. It is designed to answer one question: **is this exact signed build ready for public-beta rollout?**
+Latest-39 adds a single Windows Release Candidate workflow that combines the source/runtime gate with signed-installer and signed-update-package checks. Latest-40 kept that gate unchanged while hardening Windows accessibility/DPI policy; Latest-41 keeps the same gate and adds MSAA semantics for painted native-page actions while preserving the standard Win32 client accessibility tree. It is designed to answer one question: **is this exact signed build ready for public-release review?**
 
 This workflow must run on real Windows. Portable GCC/Clang validation cannot prove MSVC, WebView2, Authenticode, Inno Setup, Default Apps registration, installer upgrade, or Windows process behavior.
 
@@ -116,8 +116,15 @@ It records the exact installer/manifest hashes and SHA-256 references to each co
 
 ## Important release rule
 
-`Build-PublicBeta.ps1` creates signed release artifacts but **does not mean they are approved for publication**. The signed installer and manifest should be published only after `Test-ReleaseCandidate.ps1` passes on real Windows and the generated reports are archived with the release.
+`Build-ReleaseCandidate.ps1` creates signed candidate artifacts but **does not approve publication**. After `Test-ReleaseCandidate.ps1` passes on real Windows, run `Approve-PublicRelease.ps1`; only its `PUBLIC-RELEASE.json` output marks the exact Stable artifacts approved for publication.
 ## Signed staged-package identity
 
 Latest-44 requires `signed-dist-verification.json` beside the current installer. This report is produced after `WebCom.exe` is Authenticode-signed and records its SHA-256 and publisher identity. Fresh-install QA records the SHA-256 of the executable actually installed by Inno Setup; the RC gate requires those hashes to match before the candidate can pass. See `docs/BUILD-PACKAGE-INTEGRITY.md`.
 
+
+## Supply-chain evidence
+
+Latest-45 additionally requires `release-provenance.json` and `webcom.spdx.json` beside the signed installer. The RC gate verifies that provenance against the current source-manifest SHA-256, dependency-lock SHA-256, signed-dist report, installer, release manifest, and SBOM. Public builds must contain official NuGet SHA-512 evidence for the locked WebView2 SDK. See `docs/SUPPLY-CHAIN.md`.
+
+
+The Release Candidate summary retains the legacy `readyForPublicBeta` field for old tooling and now also emits `readyForPublicReleaseReview=true` for the final promotion gate.

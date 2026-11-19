@@ -26,10 +26,12 @@ foreach ($name in 'WebCom.exe','WebView2Loader.dll') {
 }
 if (-not $InnoCompiler) {
     $candidates = @(
+        "${env:ProgramFiles(x86)}\Inno Setup 7\ISCC.exe",
+        "$env:ProgramFiles\Inno Setup 7\ISCC.exe",
         "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
         "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
     ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) }
-    if (-not $candidates) { Fail 'ISCC.exe not found. Install Inno Setup 6 or pass -InnoCompiler.' }
+    if (-not $candidates) { Fail 'ISCC.exe not found. Install Inno Setup 7 (preferred) or 6, or pass -InnoCompiler.' }
     $InnoCompiler = $candidates[0]
 }
 if (-not (Test-Path -LiteralPath $InnoCompiler -PathType Leaf)) { Fail 'Inno Setup compiler not found' }
@@ -61,12 +63,13 @@ $signedDistReport = Join-Path $out 'signed-dist-verification.json'
     -ExpectedArchitecture x64 -ExpectedConfiguration Release -ExpectedPublisherSha256 $ExpectedPublisherSha256 -RequireUiTests -RequireTestsPassed -RequireReleaseReady -RequireSignedExecutable -OutputJson $signedDistReport
 if ($LASTEXITCODE -ne 0) { Fail "post-sign package integrity verification exited with $LASTEXITCODE" }
 $iss = Join-Path $PSScriptRoot '..\installer\WebCom.iss'
-& $InnoCompiler "/DAppVersion=$Version" "/DVersionNumeric=$VersionNumeric" "/DSourceDir=$dist" "/DOutputDir=$out" $iss
+# Let Inno sign Setup, temporary self-copies and the uninstaller. Signing only
+# the final Setup EXE after compilation leaves those embedded executables unsigned.
+$innoSignCommand = "webcom=`$q$SignTool`$q sign /fd SHA256 /sha1 $SigningCertificateSha1 /tr $TimestampUrl /td SHA256 `$f"
+& $InnoCompiler "--signtool=$innoSignCommand" "/DAppVersion=$Version" "/DVersionNumeric=$VersionNumeric" "/DSourceDir=$dist" "/DOutputDir=$out" $iss
 if ($LASTEXITCODE -ne 0) { Fail "Inno Setup exited with code $LASTEXITCODE" }
 $installer = Join-Path $out "WebCom-Setup-$Version-x64.exe"
 if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { Fail 'installer output was not created' }
-& $SignTool sign /fd SHA256 /sha1 $SigningCertificateSha1 /tr $TimestampUrl /td SHA256 $installer
-if ($LASTEXITCODE -ne 0) { Fail "signtool sign exited with code $LASTEXITCODE" }
 & $SignTool verify /pa /all /v $installer
 if ($LASTEXITCODE -ne 0) { Fail "signtool verify exited with code $LASTEXITCODE" }
 $sig = Get-AuthenticodeSignature -LiteralPath $installer

@@ -79,6 +79,29 @@ struct ParsedHttpsUrl {
     INTERNET_PORT port = INTERNET_DEFAULT_HTTPS_PORT;
 };
 
+bool RegistryCommandTargetsCurrentExecutable(HKEY root, const std::wstring& module) {
+    constexpr wchar_t key[] = L"Software\\Classes\\Applications\\WebCom.exe\\shell\\open\\command";
+    constexpr DWORD kMaxRegistryCommandBytes = 32768u * static_cast<DWORD>(sizeof(wchar_t));
+    DWORD bytes = 0;
+    if (RegGetValueW(root, key, nullptr, RRF_RT_REG_SZ, nullptr, nullptr, &bytes) != ERROR_SUCCESS ||
+        bytes < static_cast<DWORD>(sizeof(wchar_t)) || bytes > kMaxRegistryCommandBytes) return false;
+    std::vector<wchar_t> buffer(static_cast<std::size_t>(bytes) / sizeof(wchar_t) + 1u, L'\0');
+    if (RegGetValueW(root, key, nullptr, RRF_RT_REG_SZ, nullptr, buffer.data(), &bytes) != ERROR_SUCCESS) return false;
+    std::wstring command(buffer.data());
+    const auto first = command.find_first_not_of(L" \t");
+    if (first == std::wstring::npos) return false;
+    std::wstring executable;
+    if (command[first] == L'"') {
+        const auto end = command.find(L'"', first + 1);
+        if (end == std::wstring::npos || end == first + 1) return false;
+        executable = command.substr(first + 1, end - first - 1);
+    } else {
+        const auto end = command.find_first_of(L" \t", first);
+        executable = command.substr(first, end == std::wstring::npos ? command.size() - first : end - first);
+    }
+    return _wcsicmp(executable.c_str(), module.c_str()) == 0;
+}
+
 std::optional<ParsedHttpsUrl> ParseHttpsUrl(std::string_view utf8, std::string* error) {
     if (utf8.size() < 9 || utf8.size() > 4096 || Lower(utf8.substr(0, 8)) != "https://") {
         Fail(error, "Update URL must use HTTPS.");
@@ -310,6 +333,17 @@ bool DownloadHttpsToFile(std::string_view url, const std::filesystem::path& path
 }
 
 } // namespace
+
+UpdateInstallScope DetectCurrentUpdateInstallScope() {
+    std::array<wchar_t, 32768> module{};
+    const DWORD chars = GetModuleFileNameW(nullptr, module.data(), static_cast<DWORD>(module.size()));
+    if (!chars || static_cast<std::size_t>(chars) >= module.size()) return UpdateInstallScope::Unknown;
+    const std::wstring path(module.data(), chars);
+    const bool user = RegistryCommandTargetsCurrentExecutable(HKEY_CURRENT_USER, path);
+    const bool machine = RegistryCommandTargetsCurrentExecutable(HKEY_LOCAL_MACHINE, path);
+    if (user == machine) return UpdateInstallScope::Unknown;
+    return user ? UpdateInstallScope::PerUser : UpdateInstallScope::PerMachine;
+}
 
 std::optional<std::string> FetchUpdateManifestHttps(std::string_view url,
                                                     std::size_t maximum_bytes,

@@ -7,6 +7,7 @@
 #include "app.h"
 #include "launch_request.h"
 #include "startup_model.h"
+#include "security_bootstrap_win32.h"
 #include <shellapi.h>
 #include <shobjidl.h>
 #include <exception>
@@ -35,6 +36,13 @@ bool QaModeEnabled() {
 }
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
+    std::wstring security_error;
+    if (!webcom::ApplyProcessSecurityBaseline(nullptr, &security_error)) {
+        const std::wstring message = L"WebCom could not apply the required Windows process security baseline.\n\n" +
+            (security_error.empty() ? std::wstring(L"Restart Windows and try again.") : security_error);
+        MessageBoxW(nullptr, message.c_str(), L"WebCom security initialization", MB_OK | MB_ICONERROR);
+        return 4;
+    }
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     SetCurrentProcessExplicitAppUserModelID(L"WebCom.Windows");
 

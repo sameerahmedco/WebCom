@@ -65,8 +65,12 @@ This prevents a stale or differently assembled installer from passing solely bec
 
 ## Portable ZIP boundary
 
-`Build.ps1` also creates `dist\WebCom-v3-Windows-<arch>.zip`. Treat that ZIP as a **development/test artifact**. Public distribution uses the Authenticode-signed installer produced by `Build-SignedInstaller.ps1` / `Build-PublicBeta.ps1` and approved by the Release Candidate gate.
+`Build.ps1` also creates `dist\WebCom-v3-Windows-<arch>.zip`. Treat that ZIP as a **development/test artifact**. Public distribution uses the Authenticode-signed installer produced by `Build-SignedInstaller.ps1` / `Build-ReleaseCandidate.ps1` and approved by the Release Candidate gate.
 
 ## Windows requirement
 
 The package verifier reads Windows PE/version resources and Authenticode state, so the full integrity chain is Windows-only. Portable GCC/Clang validation checks the source wiring and policy guards but cannot substitute for the real Windows run.
+
+## Locked dependency evidence
+
+Latest-45 extends the integrity gate to dependency inputs. Every staged package carries the source `dependencies.lock.json` plus `DEPENDENCY-VERIFICATION.json`. Release-ready verification requires official NuGet catalog SHA-512 proof for the locked WebView2 package and rejects a staged lock/report mismatch. See `docs/SUPPLY-CHAIN.md`.

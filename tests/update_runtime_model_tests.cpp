@@ -14,6 +14,15 @@ int main(){
     };
     Check(IsTrustedPublisherFingerprint(fingerprint),"publisher fingerprint accepted");
     Check(!IsTrustedPublisherFingerprint("abc"),"short publisher fingerprint rejected");
+    Check(UpdateInstallScopeName(UpdateInstallScope::PerUser)=="per-user","per-user install scope named");
+    Check(UpdateInstallScopeName(UpdateInstallScope::PerMachine)=="per-machine","per-machine install scope named");
+    const auto per_user_policy=InstallerLaunchPolicyForScope(UpdateInstallScope::PerUser);
+    Check(per_user_policy && !per_user_policy->elevate && per_user_policy->install_mode_argument=="/CURRENTUSER",
+          "per-user updates do not request elevation and preserve install scope");
+    const auto per_machine_policy=InstallerLaunchPolicyForScope(UpdateInstallScope::PerMachine);
+    Check(per_machine_policy && per_machine_policy->elevate && per_machine_policy->install_mode_argument=="/ALLUSERS",
+          "per-machine updates request elevation and preserve install scope");
+    Check(!InstallerLaunchPolicyForScope(UpdateInstallScope::Unknown),"unknown install scope cannot launch an installer automatically");
     Check(ManifestUrlForChannel(config,ReleaseChannel::Stable).has_value(),"stable HTTPS endpoint accepted");
     auto bad_config=config; bad_config.stable_manifest_url="http://updates.example.test/stable";
     Check(!ManifestUrlForChannel(bad_config,ReleaseChannel::Stable),"HTTP manifest endpoint rejected");

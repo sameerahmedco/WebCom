@@ -17,6 +17,8 @@ AppName=WebCom
 AppVersion={#AppVersion}
 AppVerName=WebCom {#AppVersion}
 AppPublisher=WebCom
+SetupIconFile=..\resources\webcom.ico
+MinVersion=10.0
 DefaultDirName={autopf}\WebCom
 DefaultGroupName=WebCom
 UninstallDisplayIcon={app}\WebCom.exe
@@ -27,7 +29,7 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-PrivilegesRequired=admin
+PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog commandline
 CloseApplications=yes
 RestartApplications=no
@@ -37,11 +39,16 @@ SetupLogging=yes
 VersionInfoVersion={#VersionNumeric}.0
 VersionInfoProductName=WebCom
 VersionInfoProductVersion={#AppVersion}
+SignTool=webcom
+SignedUninstaller=yes
 
 [Files]
 Source: "{#SourceDir}\WebCom.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\WebView2Loader.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\extensions\webcom-ad-blocker\*"; DestDir: "{app}\extensions\webcom-ad-blocker"; Flags: ignoreversion
+Source: "{#SourceDir}\PRIVACY.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\SECURITY.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Registry]
 ; Register WebCom as a candidate for Windows Default Apps. The installer does
@@ -81,5 +88,3 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 [Run]
 Filename: "{app}\WebCom.exe"; Description: "Launch WebCom"; Flags: nowait postinstall skipifsilent
 
-[UninstallDelete]
-Type: filesandordirs; Name: "{app}"

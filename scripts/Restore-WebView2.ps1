@@ -1,14 +1,29 @@
 [CmdletBinding()]
 param(
-    [string]$SdkDir
+    [string]$SdkDir,
+    [switch]$RequireOfficialHash,
+    [string]$VerificationJson = ''
 )
 
 $ErrorActionPreference = 'Stop'
-$sdkVersion = '1.0.4314.35'
-$packageId = 'Microsoft.Web.WebView2'
-$packageIdLower = $packageId.ToLowerInvariant()
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $dependencyRoot = Join-Path $repositoryRoot '.deps'
+$lockPath = Join-Path $repositoryRoot 'dependencies.lock.json'
+if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) { throw 'dependencies.lock.json is missing.' }
+$lock = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($lock.schema -ne 'webcom-dependencies-v1') { throw 'dependencies.lock.json has an unsupported schema.' }
+$dependency = @($lock.dependencies | Where-Object { $_.packageId -eq 'Microsoft.Web.WebView2' })
+if ($dependency.Count -ne 1) { throw 'dependencies.lock.json must contain exactly one Microsoft.Web.WebView2 record.' }
+$dependency = $dependency[0]
+$packageId = [string]$dependency.packageId
+$sdkVersion = [string]$dependency.version
+$packageUrl = [string]$dependency.packageUrl
+if ($packageId -cne 'Microsoft.Web.WebView2' -or $sdkVersion -notmatch '^\d+\.\d+\.\d+\.\d+$' -or $packageUrl -notmatch '^https://api\.nuget\.org/') {
+    throw 'The WebView2 dependency lock contains an invalid package identity/version/source.'
+}
+$packageIdLower = $packageId.ToLowerInvariant()
+$lockSha256 = (Get-FileHash -LiteralPath $lockPath -Algorithm SHA256).Hash.ToLowerInvariant()
+if (-not $VerificationJson) { $VerificationJson = Join-Path $dependencyRoot 'webview2-verification.json' }
 
 function Test-SdkLayout([string]$Path) {
     foreach ($relativeFile in @(
@@ -49,10 +64,8 @@ function Get-OfficialPackageHash {
     # sibling .nupkg.sha512 file. The SHA-512 is published in catalog metadata.
     # Catalog lookup is best-effort because some corporate proxies block the
     # registration/catalog endpoints while still allowing the package download.
-    $registrationBases = @(
-        'https://api.nuget.org/v3/registration5-gz-semver2',
-        'https://api.nuget.org/v3/registration5-semver1'
-    )
+    $registrationBases = @($dependency.registrationBases)
+    if ($registrationBases.Count -lt 1) { throw 'The dependency lock does not contain a NuGet registration source.' }
 
     foreach ($base in $registrationBases) {
         try {
@@ -75,8 +88,18 @@ function Get-OfficialPackageHash {
 }
 
 if ($SdkDir) {
+    if ($RequireOfficialHash) { throw 'Release dependency verification cannot use -SdkDir; restore the locked NuGet package so its official catalog hash can be proven.' }
     $offlineSdk = (Resolve-Path -LiteralPath $SdkDir).Path
     Test-SdkLayout $offlineSdk
+    $offlineReport = [ordered]@{
+        schema='webcom-dependency-verification-v1'; generatedAt=(Get-Date).ToString('o'); lockSha256=$lockSha256;
+        packageId=$packageId; version=$sdkVersion; source='offline-sdk'; packageUrl=$packageUrl; officialHashVerified=$false; packageSha512Base64='';
+        headerSha256=(Get-FileHash -LiteralPath (Join-Path $offlineSdk 'build\native\include\WebView2.h') -Algorithm SHA256).Hash.ToLowerInvariant();
+        x64LoaderSha256=(Get-FileHash -LiteralPath (Join-Path $offlineSdk 'build\native\x64\WebView2Loader.dll') -Algorithm SHA256).Hash.ToLowerInvariant();
+        arm64LoaderSha256=(Get-FileHash -LiteralPath (Join-Path $offlineSdk 'build\native\arm64\WebView2Loader.dll') -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    $parent=Split-Path -Parent $VerificationJson;if($parent){New-Item -ItemType Directory -Force -Path $parent|Out-Null}
+    $offlineReport|ConvertTo-Json -Depth 6|Set-Content -LiteralPath $VerificationJson -Encoding UTF8
     Write-Host "Using the supplied WebView2 SDK: $offlineSdk"
     Write-Output $offlineSdk
     return
@@ -86,7 +109,6 @@ New-Item -ItemType Directory -Path $dependencyRoot -Force | Out-Null
 $packageName = "microsoft.web.webview2.$sdkVersion.nupkg"
 $packagePath = Join-Path $dependencyRoot $packageName
 $destination = Join-Path $dependencyRoot "Microsoft.Web.WebView2.$sdkVersion"
-$packageUrl = "https://api.nuget.org/v3-flatcontainer/$packageIdLower/$sdkVersion/$packageName"
 
 # Windows PowerShell 5.1 can otherwise negotiate an obsolete TLS version.
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -108,25 +130,26 @@ if (-not (Test-Path -LiteralPath $packagePath)) {
     }
 }
 
+$sha512 = [Security.Cryptography.SHA512]::Create()
+$packageStream = [IO.File]::OpenRead($packagePath)
+try { $actualChecksum = [Convert]::ToBase64String($sha512.ComputeHash($packageStream)) }
+finally { $packageStream.Dispose(); $sha512.Dispose() }
+
 $expectedChecksum = Get-OfficialPackageHash
+$officialHashVerified = $false
 if ($expectedChecksum) {
-    $sha512 = [Security.Cryptography.SHA512]::Create()
-    $packageStream = [IO.File]::OpenRead($packagePath)
-    try {
-        $actualChecksum = [Convert]::ToBase64String($sha512.ComputeHash($packageStream))
-    }
-    finally {
-        $packageStream.Dispose()
-        $sha512.Dispose()
-    }
     if ($actualChecksum -cne $expectedChecksum) {
         Remove-Item -LiteralPath $packagePath -Force -ErrorAction SilentlyContinue
         throw 'WebView2 package SHA512 does not match NuGet catalog metadata. The cached package was deleted; run build.cmd again.'
     }
+    $officialHashVerified = $true
     Write-Host 'WebView2 package SHA512 verified against NuGet catalog metadata.'
 }
+elseif ($RequireOfficialHash) {
+    throw 'Release dependency verification requires the official NuGet catalog SHA512, but catalog metadata could not be retrieved.'
+}
 else {
-    Write-Warning 'NuGet catalog hash metadata was unavailable. Continuing with HTTPS download plus ZIP, package identity, version, and SDK-layout validation.'
+    Write-Warning 'NuGet catalog hash metadata was unavailable. Development build continues with HTTPS download plus ZIP, identity, version, and SDK-layout validation.'
 }
 
 # Re-extract on every build so modified/stale extracted SDK files are not reused.
@@ -184,5 +207,17 @@ finally {
     }
 }
 
+$verification = [ordered]@{
+    schema='webcom-dependency-verification-v1'; generatedAt=(Get-Date).ToString('o'); lockSha256=$lockSha256;
+    packageId=$packageId; version=$sdkVersion; source='nuget'; packageUrl=$packageUrl; officialHashVerified=$officialHashVerified;
+    packageSha512Base64=$actualChecksum; catalogSha512Base64=$(if($expectedChecksum){$expectedChecksum}else{''});
+    packageBytes=(Get-Item -LiteralPath $packagePath).Length;
+    headerSha256=(Get-FileHash -LiteralPath (Join-Path $destination 'build\native\include\WebView2.h') -Algorithm SHA256).Hash.ToLowerInvariant();
+    x64LoaderSha256=(Get-FileHash -LiteralPath (Join-Path $destination 'build\native\x64\WebView2Loader.dll') -Algorithm SHA256).Hash.ToLowerInvariant();
+    arm64LoaderSha256=(Get-FileHash -LiteralPath (Join-Path $destination 'build\native\arm64\WebView2Loader.dll') -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+$verificationParent=Split-Path -Parent $VerificationJson;if($verificationParent){New-Item -ItemType Directory -Force -Path $verificationParent|Out-Null}
+$verification|ConvertTo-Json -Depth 6|Set-Content -LiteralPath $VerificationJson -Encoding UTF8
 Write-Host 'WebView2 SDK restored and validated.'
+Write-Host "Dependency verification: $VerificationJson"
 Write-Output $destination

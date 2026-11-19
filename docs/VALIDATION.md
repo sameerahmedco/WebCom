@@ -2,13 +2,14 @@
 
 ## Completed source validation
 
-- GCC C++20 portable matrix: **40/40 CTest targets passed**.
-- Clang C++20 portable matrix: **40/40 CTest targets passed**.
-- Portable behavioral executables: **1151 explicit checks**, all passing.
+- GCC C++20 portable matrix: **42/42 CTest targets passed**.
+- Clang C++20 portable matrix: **42/42 CTest targets passed**.
+- ASan + UBSan portable matrix: **42/42 CTest targets passed** with leak detection enabled.
+- Portable behavioral executables: **1184 explicit checks**, all passing.
 - Bundled ad-blocker / YouTube script tests: **8/8 passed**.
 - Memory-snapshot model tests cover host/WebView2 split totals, tab/sleep state, sleep-policy metadata, Never-sleep counts, partial runtime-process-list warnings, and incomplete-process warnings.
 - Windows memory QA tooling now carries explicit scenario labels and optional versioned JSON output with average/median/p95/peak summaries while avoiding process command lines and browsing URLs.
-- Windows/MSVC source-preflight gate: **591 explicit checks**, all passing.
+- Windows/MSVC source-preflight gate: **840 explicit checks**, all passing.
 - Stable/Beta version-policy tests cover stable final, stable prerelease rejection, beta prerelease acceptance, and final-on-beta allowance.
 - Recovery-readiness tests cover ready, not-recommended, running-version mismatch, missing package, version mismatch, publisher mismatch, and stable log-name output.
 - New Tab model tests cover host normalization, non-web rejection, recent-host deduplication, newest-entry selection, and bounded-card behavior.
@@ -32,6 +33,9 @@
 - Latest-42 adds log-driven negative guards for the old MSVC `LONG`/`int` `std::clamp` ambiguity, raw-`POINT` GDI+ `DrawLine` overload ambiguity, and brittle Windows-UI `SavedProfile` startup aggregate. The UI harness now seeds profiles through explicit field assignment while preserving namespace-qualified `webcom::StartupMode::Continue`.
 - Latest-43 turns WebCom-owned native MSVC warnings into build failures by default (`/W4 /WX`), suppresses only external angle-bracket header diagnostics from that project policy, and retains a clearly labeled diagnostic-only override. Windows acceptance still parses repository warning lines after the build so the release gate remains defense-in-depth.
 - Latest-44 source-preflight guards the staged-package verifier, PE architecture checks, source-manifest exactness, release-ready `/WX`/update/publisher metadata, pre/post-sign verification, signed executable identity, and installer-vs-staged executable SHA-256 binding.
+- Latest-45 source-preflight guards the dependency-lock schema/version/source, strict official NuGet SHA-512 release path, staged dependency-evidence binding, SPDX/provenance generation, and Release Candidate hash verification across source/dependency/signed-dist/installer/manifest/SBOM artifacts.
+- Latest-46 adds portable security-baseline checks plus sanitizer acceptance and expands source-preflight across process mitigations, PE hardening, least-privilege/safe-uninstall policy, Inno 7/6 native signing, signed-uninstaller identity, public policy/community files, and the final RC-to-public promotion gate.
+- Latest-46 public-release promotion requires the exact Windows-approved Stable installer/manifest, mandatory memory and machine-install evidence, acceptable upgrade evidence, valid Authenticode publisher identity, exact RC/provenance/SBOM/report hashes, real HTTPS operational URLs, and an explicit distribution-license mode before `PUBLIC-RELEASE.json` can be created.
 - The acceptance runner can optionally collect the one-tab memory scenario and writes `windows-acceptance.json`; portable Linux validation cannot execute that Windows/WebView2 gate.
 
 ## Windows acceptance required
@@ -76,3 +80,8 @@ The source preflight explicitly guards the compile failures previously seen in W
 - `Test-ReleaseMatrix.ps1` emits `webcom-release-matrix-v2` so signed channel/package verification is archived with the candidate.
 - `Test-ReleaseCandidate.ps1` aggregates clean Windows acceptance, the default 300 MiB one-tab memory target, release-matrix verification, fresh-install runtime/uninstall QA, and optional upgrade compatibility into `webcom-release-candidate-v1` with hashes of every component report.
 - Portable source-preflight verifies that these gates and the explicit "do not publish until RC passes" policy remain wired, but only a real Windows run can satisfy the Release Candidate gate.
+
+- Latest-47 release-operations guards require the one-command release ceremony, immutable evidence bundle, explicit no-auto-publication boundary, and post-publication HTTPS/hash/AuthentiCode/public-endpoint verification to remain wired.
+- Latest-48 source-preflight guards the approved-release rollback validator, same-publisher/hash/AuthentiCode/version policy, non-destructive withdrawal/restore preparation, incident evidence checksums, and the explicit lower-version downgrade limitation.
+- Latest-49 update-install hardening adds portable install-scope and incomplete-install reconciliation coverage plus source-preflight guards for HKCU/HKLM executable-bound scope detection, explicit `/CURRENTUSER`/`/ALLUSERS` launch policy, fail-closed portable/ambiguous installs, scope-aware elevation, and cancelled-installer recovery to verified staged state.
+- Latest-50 background update hardening adds portable cadence/persistence/retry tests plus conservative `WEBCOM_UPDATES` v1/v2→v3 migration coverage. Source-preflight requires startup scheduling, persisted cross-window cadence refresh, process-wide update-network serialization, independent automatic-download consent, verified-only background staging, explicit-install UI text, origin-aware runtime logging, and cadence restart after update-health/transaction completion.

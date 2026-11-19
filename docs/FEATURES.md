@@ -20,8 +20,9 @@
 - Split view.
 - Capture tools.
 - Crash recovery.
-- Safe updates.
+- Safe updates with explicit signed staging, scope-preserving per-user/per-machine installer launch, fail-closed portable/ambiguous installs, and cancelled-install transaction recovery.
 - Verified rollback.
+- Release incident/withdrawal evidence tooling with last-known-good approval validation.
 - Stable/Beta channels.
 - Accessibility support: custom tab-strip MSAA semantics plus a native-client MSAA bridge for painted internal-page actions. Visible painted actions expose push-button roles, names, screen bounds, hit-testing, focus state/events and default activation while standard Win32 edit/button children remain in the accessibility tree. Visible native focus outlines, keyboard-accessible internal-page actions, profile + Windows High Contrast composition, Windows/profile/Remote Desktop reduced-motion policy, and per-monitor DPI-aware native chrome are also included.
 - Memory checks. The native **Performance snapshot** separates WebCom host vs WebView2 process-group working/private memory and includes tab/sleep/workspace state plus the current automatic-sleep policy.

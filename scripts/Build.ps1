@@ -10,7 +10,8 @@ param(
     [string]$PublisherSha256 = '',
     [switch]$SkipTests,
     [switch]$SkipUiTests,
-    [switch]$AllowCompilerWarnings
+    [switch]$AllowCompilerWarnings,
+    [switch]$RequireVerifiedDependencies
 )
 
 $ErrorActionPreference = 'Stop'
@@ -71,7 +72,11 @@ try {
     }
 
     $restoreScript = Join-Path $PSScriptRoot 'Restore-WebView2.ps1'
-    $resolvedSdk = if ($SdkDir) { & $restoreScript -SdkDir $SdkDir } else { & $restoreScript }
+    $dependencyVerification = Join-Path $repositoryRoot '.deps\webview2-verification.json'
+    $restoreArgs = @{ VerificationJson = $dependencyVerification }
+    if ($SdkDir) { $restoreArgs.SdkDir = $SdkDir }
+    if ($RequireVerifiedDependencies) { $restoreArgs.RequireOfficialHash = $true }
+    $resolvedSdk = & $restoreScript @restoreArgs
     $resolvedSdk = [string]$resolvedSdk
     if (-not $resolvedSdk) { throw 'WebView2 SDK restore did not return a directory.' }
 
@@ -141,7 +146,7 @@ try {
         $assetPath = Join-Path $repositoryRoot "resources\$brandAsset"
         if (Test-Path -LiteralPath $assetPath) { Copy-Item -LiteralPath $assetPath -Destination $packageDirectory -Force }
     }
-    foreach ($documentName in @('README.md', 'HOW_TO_BUILD.md', 'BUILDING.md', 'START-HERE.txt', 'THIRD-PARTY-NOTICES.md', 'run.cmd', 'Test-UI.cmd')) {
+    foreach ($documentName in @('README.md', 'HOW_TO_BUILD.md', 'BUILDING.md', 'START-HERE.txt', 'SECURITY.md', 'PRIVACY.md', 'CONTRIBUTING.md', 'THIRD-PARTY-NOTICES.md', 'run.cmd', 'Test-UI.cmd')) {
         $documentPath = Join-Path $repositoryRoot $documentName
         if (Test-Path -LiteralPath $documentPath) {
             Copy-Item -LiteralPath $documentPath -Destination $packageDirectory -Force
@@ -154,6 +159,11 @@ try {
     if (Test-Path -LiteralPath $docsDirectory) {
         Copy-Item -LiteralPath $docsDirectory -Destination $packageDirectory -Recurse -Force
     }
+    if (-not (Test-Path -LiteralPath $dependencyVerification -PathType Leaf)) {
+        throw "Dependency verification report missing: $dependencyVerification"
+    }
+    Copy-Item -LiteralPath $dependencyVerification -Destination (Join-Path $packageDirectory 'docs\DEPENDENCY-VERIFICATION.json') -Force
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'dependencies.lock.json') -Destination (Join-Path $packageDirectory 'docs\dependencies.lock.json') -Force
 
     # A local MSVC build must not inherit the supplied cross-preview's hashes.
     $builtExecutable = Join-Path $packageDirectory 'WebCom.exe'
@@ -173,9 +183,12 @@ try {
         $(if (Test-Path -LiteralPath $builtUiTests) { "Native UI harness SHA256: $((Get-FileHash -LiteralPath $builtUiTests -Algorithm SHA256).Hash.ToLowerInvariant())" } else { 'Native UI harness: NOT BUILT' }),
         "Tests: $testResult",
         "Warnings as errors: $(if ($AllowCompilerWarnings) { 'OFF' } else { 'ON' })",
+        'Native security hardening: /GS /guard:cf /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA /CETCOMPAT; safe DLL search + heap/image-load mitigations at startup.',
         "Update stable manifest: $(if ($StableManifestUrl) { $StableManifestUrl } else { 'NOT CONFIGURED' })",
         "Update beta manifest: $(if ($BetaManifestUrl) { $BetaManifestUrl } else { 'NOT CONFIGURED' })",
         "Publisher SHA256: $(if ($PublisherSha256) { $PublisherSha256.ToLowerInvariant() } else { 'NOT CONFIGURED' })",
+        "Dependency lock SHA256: $((Get-FileHash -LiteralPath (Join-Path $repositoryRoot 'dependencies.lock.json') -Algorithm SHA256).Hash.ToLowerInvariant())",
+        "Verified release dependencies: $(if ($RequireVerifiedDependencies) { 'REQUIRED' } else { 'NOT REQUIRED' })",
         'Live-website rendering, DPI transitions, screen-reader behavior and RAM benchmarks require separate Windows acceptance testing.',
         'Native UI checks use isolated temporary data and do not start the WebView2 engine.'
     )
@@ -194,7 +207,7 @@ try {
     }
     if (-not $SkipUiTests) { $verifyArgs.RequireUiTests = $true }
     if (-not $SkipTests -and -not $crossCompiled) { $verifyArgs.RequireTestsPassed = $true }
-    if ($Configuration -eq 'Release' -and $StableManifestUrl -and $PublisherSha256 -and -not $SkipUiTests -and -not $SkipTests -and -not $crossCompiled -and -not $AllowCompilerWarnings) {
+    if ($Configuration -eq 'Release' -and $StableManifestUrl -and $PublisherSha256 -and $RequireVerifiedDependencies -and -not $SkipUiTests -and -not $SkipTests -and -not $crossCompiled -and -not $AllowCompilerWarnings) {
         $verifyArgs.RequireReleaseReady = $true
     }
     & $verifyPackage @verifyArgs

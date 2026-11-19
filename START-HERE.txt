@@ -16,8 +16,8 @@ BUILD HELP
 Every build writes build-last.log. If compilation fails, report the first compiler/linker error block from that file.
 
 PROJECT STATUS
-WebCom v3 is a public-beta native C++20/Win32 browser using Microsoft Edge WebView2 for web rendering.
-See docs/PUBLIC-BETA-CHECKLIST.md for release acceptance.
+WebCom v3 is Release Candidate source for a native C++20/Win32 browser using Microsoft Edge WebView2 for web rendering.
+See docs/PUBLIC-RELEASE.md and docs/PUBLIC-RELEASE-CHECKLIST.md for release acceptance.
 
 RELEASE CANDIDATE:
 Before publishing a signed WebCom v3 installer, run scripts\Test-ReleaseCandidate.ps1 against that exact installer and its matching manifest. See docs\RELEASE-CANDIDATE.md. Do not silently skip previous-version upgrade QA; provide -PreviousInstaller or explicitly use -NoPreviousSignedBuild when no prior signed release exists.
@@ -27,3 +27,13 @@ Normal build.cmd runs treat WebCom-owned MSVC warnings as errors. Use -AllowComp
 
 PACKAGE INTEGRITY:
 Latest-44 verifies every staged Windows package before ZIP creation. Signed release builds additionally produce signed-dist-verification.json, which must remain beside the installer for Release Candidate sign-off. The RC gate confirms the installer contains the exact signed WebCom.exe that passed staged-package verification. See docs\BUILD-PACKAGE-INTEGRITY.md.
+
+SUPPLY CHAIN:
+Latest-45 pins the WebView2 SDK in dependencies.lock.json. Public/signed builds require official NuGet SHA-512 verification and generate release-provenance.json plus webcom.spdx.json. Keep both beside the signed installer for Release Candidate sign-off. See docs\SUPPLY-CHAIN.md.
+
+
+PUBLIC RELEASE PROMOTION:
+Build signed candidate artifacts with scripts\Build-ReleaseCandidate.ps1, run scripts\Test-ReleaseCandidate.ps1 on real Windows with the memory and machine-install gates enabled, then run scripts\Approve-PublicRelease.ps1. Only PUBLIC-RELEASE.json marks the exact signed Stable artifacts approved for publication. The approval command does not upload anything.
+PUBLIC RELEASE OPERATIONS (LATEST-47):
+Use scripts\Invoke-PublicRelease.ps1 from elevated Windows PowerShell to run build -> mandatory RC -> approval -> evidence in one fail-closed flow. It does not upload anything. After manually publishing the approved installer/Stable manifest, run scripts\Test-PublishedRelease.ps1 and archive its checksummed health report. See docs\POST-RELEASE.md.
+

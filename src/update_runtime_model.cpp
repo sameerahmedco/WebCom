@@ -30,6 +30,22 @@ bool IsTrustedPublisherFingerprint(std::string_view value) {
     });
 }
 
+std::string_view UpdateInstallScopeName(UpdateInstallScope scope) {
+    switch (scope) {
+    case UpdateInstallScope::PerUser: return "per-user";
+    case UpdateInstallScope::PerMachine: return "per-machine";
+    default: return "unknown";
+    }
+}
+
+std::optional<UpdateInstallerLaunchPolicy> InstallerLaunchPolicyForScope(UpdateInstallScope scope) {
+    switch (scope) {
+    case UpdateInstallScope::PerUser: return UpdateInstallerLaunchPolicy{false, "/CURRENTUSER"};
+    case UpdateInstallScope::PerMachine: return UpdateInstallerLaunchPolicy{true, "/ALLUSERS"};
+    default: return std::nullopt;
+    }
+}
+
 std::optional<std::string> ManifestUrlForChannel(const ReleaseRuntimeConfig& config,
                                                   ReleaseChannel channel) {
     const std::string& value = channel == ReleaseChannel::Beta

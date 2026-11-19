@@ -8,6 +8,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -162,15 +163,25 @@ int main(int argc, char** argv) {
     }
 
     const auto update_transport = ReadAll(root / "src" / "update_transport_win32.cpp");
+    const auto update_runtime_model = ReadAll(root / "src" / "update_runtime_model.cpp");
+    const auto update_model_source = ReadAll(root / "src" / "update_model.cpp");
+    const auto update_automation_source = ReadAll(root / "src" / "update_automation_model.cpp");
+    const auto update_runtime_tests = ReadAll(root / "tests" / "update_runtime_model_tests.cpp");
+    const auto update_model_tests = ReadAll(root / "tests" / "update_model_tests.cpp");
+    const auto update_automation_tests = ReadAll(root / "tests" / "update_automation_model_tests.cpp");
     if (!update_transport.empty()) {
-        const std::array<std::pair<std::string_view,std::string_view>,7> update_guards{{
+        const std::array<std::pair<std::string_view,std::string_view>,11> update_guards{{
             {"WINHTTP_DISABLE_COOKIES", "update transport must disable WinHTTP cookies"},
             {"WINHTTP_DISABLE_AUTHENTICATION", "update transport must disable automatic WinHTTP authentication"},
             {"WINHTTP_OPTION_REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP", "update transport must block HTTPS-to-HTTP redirects"},
             {"BCRYPT_SHA256_ALGORITHM", "update package verification must use SHA-256"},
             {"WinVerifyTrust", "update package verification must use Windows Authenticode trust"},
             {"WTHelperGetProvSignerFromChain", "update package verification must inspect the trusted signer certificate"},
-            {"GetFileVersionInfoW", "update package verification must confirm the signed executable product identity"}
+            {"GetFileVersionInfoW", "update package verification must confirm the signed executable product identity"},
+            {"DetectCurrentUpdateInstallScope", "update transport must detect the current installer scope before launching setup"},
+            {"HKEY_CURRENT_USER", "update scope detection must inspect the per-user registration"},
+            {"HKEY_LOCAL_MACHINE", "update scope detection must inspect the per-machine registration"},
+            {"RegistryCommandTargetsCurrentExecutable", "update scope detection must bind registry registration to the running executable"}
         }};
         for (const auto& [token, message] : update_guards) {
             ++checks;
@@ -180,22 +191,118 @@ int main(int argc, char** argv) {
     }
 
 
+    for (const auto& [source, token, message] : std::array<std::tuple<std::string_view,std::string_view,std::string_view>,9>{{
+        {update_runtime_model, "UpdateInstallScope::PerUser", "update runtime must model per-user installer scope"},
+        {update_runtime_model, "UpdateInstallScope::PerMachine", "update runtime must model per-machine installer scope"},
+        {update_runtime_model, "\"/CURRENTUSER\"", "per-user update launch must preserve per-user installer scope"},
+        {update_runtime_model, "\"/ALLUSERS\"", "per-machine update launch must preserve per-machine installer scope"},
+        {update_runtime_model, "return std::nullopt", "unknown installer scope must fail closed"},
+        {update_model_source, "RevertIncompleteScheduledInstall", "update model must recover a cancelled/incomplete scheduled install"},
+        {update_runtime_tests, "unknown install scope cannot launch an installer automatically", "install-scope policy must have portable fail-closed regression coverage"},
+        {update_model_tests, "cancelled or incomplete install returns to verified staged state", "incomplete installer reconciliation must have portable regression coverage"},
+        {update_model_tests, "incomplete install reconciliation preserves verified package metadata", "reconciliation must preserve the verified package identity"}
+    }}) {
+        ++checks;
+        if (source.find(token) == std::string::npos)
+            findings.push_back({"src/update_runtime_model.cpp", 0, std::string(message)});
+    }
+
+    for (const auto& [source, token, message] : std::array<std::tuple<std::string_view,std::string_view,std::string_view>,11>{{
+        {update_model_source, "WEBCOM_UPDATES\\t3", "update settings must use the v3 schema for independent automatic-download consent"},
+        {update_model_source, "automatic_downloads", "update settings must persist automatic verified-download consent"},
+        {update_model_tests, "v2 settings retain check consent but do not silently enable automatic downloads", "settings migration must not silently opt existing users into background downloads"},
+        {update_automation_source, "kBackgroundUpdateCheckIntervalSeconds", "background update checks must use a bounded persisted cadence"},
+        {update_automation_source, "last_background_check", "background update cadence must survive process restarts"},
+        {update_automation_tests, "six-hour cadence becomes due exactly at boundary", "background update cadence must have portable regression coverage"},
+        {update_automation_tests, "clock moving backwards fails toward one safe recheck", "background scheduling must handle backwards clock changes safely"},
+        {update_automation_tests, "background retry delay is capped at five minutes", "background retry scheduling must avoid unbounded or tight retry loops"},
+        {update_automation_source, "BackgroundUpdateQuickRetryAllowed", "background update policy must explicitly bound quick retries"},
+        {update_automation_tests, "first two failures allow bounded quick retries", "background update quick-retry allowance must have regression coverage"},
+        {update_automation_tests, "third and later failures fall back to normal six-hour cadence", "repeated background failures must fall back to the normal cadence"}
+    }}) {
+        ++checks;
+        if (source.find(token) == std::string::npos)
+            findings.push_back({"src/update_automation_model.cpp", 0, std::string(message)});
+    }
+
     const auto app_source = ReadAll(root / "src" / "app.cpp");
     if (!app_source.empty()) {
+        for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,17>{{
+            {"ScheduleAutomaticUpdateCheck(true);", "browser startup must schedule consented background update checks"},
+            {"kAutomaticUpdateCheck", "background update checks must use a dedicated Win32 timer"},
+            {"BackgroundUpdateCheckDelaySeconds", "background timer scheduling must use the portable cadence policy"},
+            {"LoadUpdateAutomationState(root_)", "each background attempt must refresh shared persisted cadence state across profile windows"},
+            {"LoadUpdateRetryState(root_)", "background attempts must refresh shared retry/backoff state across profile windows"},
+            {"g_update_network_busy.compare_exchange_strong", "multi-profile windows must serialize update check/download network operations"},
+            {"RecordBackgroundUpdateCheck", "background endpoint contact must be persisted before asynchronous fetch"},
+            {"completion->background", "update completions must preserve manual/background origin"},
+            {"update_settings_.automatic_downloads", "automatic staging must require a separate saved user preference"},
+            {"StageAvailableUpdateNow(true)", "background checks may stage only when verified automatic downloads are enabled"},
+            {"Installer launch always remains manual", "Updates UI must keep installer launch explicitly user-controlled"},
+            {"ToggleAutomaticUpdateDownloads", "Updates UI must expose independent automatic-download consent"},
+            {"g_update_network_busy.store(false)", "asynchronous update workers must release the process-wide network gate"},
+            {"origin=background", "runtime logs must distinguish background update activity from manual actions"},
+            {"update.rollback.completed", "rollback completion must retain explicit update lifecycle logging"},
+            {"ScheduleAutomaticUpdateCheck(false);\n        Note(L\"Updated WebCom passed its startup health check.", "successful update health completion must resume automatic update cadence"},
+            {"ScheduleAutomaticUpdateCheck(false);\n        QueueUI(); Note(L\"Staged update state cleared.", "manual staged-state cleanup must resume automatic update cadence"}
+        }}) {
+            ++checks;
+            const auto ui_token = token == std::string_view("Installer launch always remains manual");
+            const auto ui_source = ui_token ? ReadAll(root / "src" / "native_ui.inl") : std::string{};
+            const auto& source = ui_token ? ui_source : app_source;
+            if (source.find(token) == std::string::npos)
+                findings.push_back({ui_token ? "src/native_ui.inl" : "src/app.cpp", 0, std::string(message)});
+        }
+
         const auto rollback = app_source.find("void BrowserApp::Impl::RollbackPreviousVersionNow()");
         ++checks;
         if (rollback == std::string::npos) {
             findings.push_back({"src/app.cpp", 0, "explicit rollback handler is missing"});
         } else {
             const auto context = app_source.substr(rollback, std::min<std::size_t>(7000, app_source.size() - rollback));
-            for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,4>{{
+            for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,7>{{
                 {"EvaluateRecoveryReadiness", "rollback must pass the centralized recovery-readiness policy"},
                 {"VerifyStagedUpdatePackage", "rollback must re-verify the preserved installer immediately before launch"},
-                {"L\"runas\"", "rollback installer launch must use Windows elevation"},
+                {"DetectCurrentUpdateInstallScope", "rollback must detect the existing installation scope"},
+                {"InstallerLaunchPolicyForScope", "rollback must preserve per-user/per-machine installer scope"},
+                {"launch_policy->elevate?L\"runas\":L\"open\"", "rollback elevation must depend on the verified installation scope"},
+                {"launch_policy->install_mode_argument", "rollback must pass an explicit CURRENTUSER/ALLUSERS installer mode"},
                 {"RecoveryReadinessName", "rollback policy failures must retain a bounded log-safe status"}
             }}) {
                 ++checks;
                 if (context.find(token) == std::string::npos) findings.push_back({"src/app.cpp", LineFor(app_source, rollback), std::string(message)});
+            }
+        }
+        const auto install = app_source.find("void BrowserApp::Impl::InstallStagedUpdateNow()");
+        ++checks;
+        if (install == std::string::npos) findings.push_back({"src/app.cpp", 0, "verified update install handler is missing"});
+        else {
+            const auto context = app_source.substr(install, std::min<std::size_t>(7000, app_source.size() - install));
+            for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,6>{{
+                {"VerifyStagedUpdatePackage", "installer must be re-verified immediately before user-triggered launch"},
+                {"DetectCurrentUpdateInstallScope", "update installer must detect the existing installation scope"},
+                {"InstallerLaunchPolicyForScope", "update installer must preserve the existing install scope"},
+                {"launch_policy->elevate ? L\"runas\" : L\"open\"", "update installer elevation must be scope-aware rather than unconditional"},
+                {"launch_policy->install_mode_argument", "update installer must pass CURRENTUSER/ALLUSERS explicitly"},
+                {"update.install.scope_unknown", "unknown/portable install scope must be logged and blocked fail-closed"}
+            }}) {
+                ++checks;
+                if (context.find(token) == std::string::npos) findings.push_back({"src/app.cpp", LineFor(app_source, install), std::string(message)});
+            }
+        }
+        const auto prepare_health = app_source.find("void BrowserApp::Impl::PrepareUpdateHealthState()");
+        ++checks;
+        if (prepare_health == std::string::npos) findings.push_back({"src/app.cpp", 0, "update startup reconciliation handler is missing"});
+        else {
+            const auto context = app_source.substr(prepare_health, std::min<std::size_t>(7000, app_source.size() - prepare_health));
+            for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,4>{{
+                {"RevertIncompleteScheduledInstall", "cancelled/incomplete installer attempts must return to verified staged state"},
+                {"previous_version == kWebComVersion", "incomplete-install reconciliation must require the pre-update version to be running"},
+                {"update.install.incomplete", "incomplete install reconciliation must be logged"},
+                {"signed installer remains staged", "users must be told the verified staged package remains available after cancellation/failure"}
+            }}) {
+                ++checks;
+                if (context.find(token) == std::string::npos) findings.push_back({"src/app.cpp", LineFor(app_source, prepare_health), std::string(message)});
             }
         }
         const auto health = app_source.find("void BrowserApp::Impl::ConfirmUpdateHealth()");
@@ -809,6 +916,16 @@ int main(int argc, char** argv) {
     const auto release_candidate_script = ReadAll(root / "scripts" / "Test-ReleaseCandidate.ps1");
     const auto build_package_script = ReadAll(root / "scripts" / "Verify-BuildPackage.ps1");
     const auto signed_installer_script = ReadAll(root / "scripts" / "Build-SignedInstaller.ps1");
+    const auto release_candidate_build_script = ReadAll(root / "scripts" / "Build-ReleaseCandidate.ps1");
+    const auto public_release_approval_script = ReadAll(root / "scripts" / "Approve-PublicRelease.ps1");
+    const auto public_release_invoke_script = ReadAll(root / "scripts" / "Invoke-PublicRelease.ps1");
+    const auto release_evidence_script = ReadAll(root / "scripts" / "New-ReleaseEvidenceBundle.ps1");
+    const auto published_release_script = ReadAll(root / "scripts" / "Test-PublishedRelease.ps1");
+    const auto rollback_candidate_script = ReadAll(root / "scripts" / "Test-RollbackCandidate.ps1");
+    const auto release_withdrawal_script = ReadAll(root / "scripts" / "Prepare-ReleaseWithdrawal.ps1");
+    const auto restore_webview_script = ReadAll(root / "scripts" / "Restore-WebView2.ps1");
+    const auto provenance_script = ReadAll(root / "scripts" / "New-ReleaseProvenance.ps1");
+    const auto dependency_lock = ReadAll(root / "dependencies.lock.json");
     ++checks;
     if (manifest_script.find("stable channel cannot publish a prerelease version") == std::string::npos)
         findings.push_back({"scripts/New-ReleaseManifest.ps1", 0, "release manifest generation must reject Stable prerelease versions"});
@@ -827,7 +944,7 @@ int main(int argc, char** argv) {
             findings.push_back({"scripts/Test-ReleaseMatrix.ps1", 0, std::string(message)});
     }
 
-    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,8>{{
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,10>{{
         {"webcom-fresh-install-v2", "fresh-install QA must emit a versioned report"},
         {"ExpectedVersion", "fresh-install QA must verify the intended product version"},
         {"ProductVersion", "fresh-install QA must verify installed ProductVersion"},
@@ -835,7 +952,9 @@ int main(int argc, char** argv) {
         {"WEBCOM_QA_MODE", "fresh-install QA must use the isolated runtime launch path"},
         {"msedgewebview2.exe", "fresh-install QA must require an observed WebView2 runtime"},
         {"registryCleanupVerified", "fresh-install QA must record uninstall registry cleanup"},
-        {"WebCom-Acceptance-FreshInstall-", "fresh-install QA must reserve an isolated temporary data root"}
+        {"WebCom-Acceptance-FreshInstall-", "fresh-install QA must reserve an isolated temporary data root"},
+        {"installed uninstaller signature status", "fresh-install QA must require a valid signed uninstaller"},
+        {"uninstallerPublisherSha256", "fresh-install QA must bind the installed uninstaller to the release publisher"}
     }}) {
         ++checks;
         if (fresh_install_script.find(token) == std::string::npos)
@@ -862,7 +981,7 @@ int main(int argc, char** argv) {
             findings.push_back({"scripts/Test-UpgradeInstall.ps1", 0, std::string(message)});
     }
 
-    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,14>{{
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,21>{{
         {"webcom-release-candidate-v1", "Release Candidate gate must emit a versioned summary"},
         {"Test-WindowsAcceptance.ps1", "Release Candidate gate must run clean Windows/MSVC/WebView2 acceptance"},
         {"Test-ReleaseMatrix.ps1", "Release Candidate gate must verify signed channel manifests/packages"},
@@ -872,18 +991,25 @@ int main(int argc, char** argv) {
         {"compilerWarningCount", "Release Candidate gate must fail any project MSVC warnings reported by Windows acceptance"},
         {"registryCleanupVerified", "Release Candidate gate must require installer registry cleanup"},
         {"profileStatePreservedByInstaller", "Release Candidate upgrade gate must require persisted state preservation"},
-        {"readyForPublicBeta", "Release Candidate summary must expose the final release readiness result"},
+        {"readyForPublicBeta", "Release Candidate summary must retain backwards-compatible readiness metadata"},
+        {"readyForPublicReleaseReview", "Release Candidate summary must explicitly authorize final public-release review"},
         {"NoPreviousSignedBuild", "Release Candidate gate must require an explicit waiver when no previous signed release exists"},
         {"signed-dist-verification.json", "Release Candidate gate must require the signed staged-package verification report"},
         {"installedExecutableSha256", "Release Candidate gate must bind installed WebCom.exe to the signed staged executable hash"},
-        {"differs from the signed dist executable", "Release Candidate gate must fail installer/executable identity mismatches"}
+        {"differs from the signed dist executable", "Release Candidate gate must fail installer/executable identity mismatches"},
+        {"release-provenance.json", "Release Candidate gate must require release provenance beside the signed installer"},
+        {"webcom.spdx.json", "Release Candidate gate must require the SPDX SBOM beside the signed installer"},
+        {"webcom-release-provenance-v1", "Release Candidate gate must validate the provenance schema"},
+        {"source-manifest hash does not match this source tree", "Release Candidate gate must bind provenance to the current source manifest"},
+        {"dependency-lock identity is inconsistent", "Release Candidate gate must bind provenance to the current dependency lock"},
+        {"SBOM identity is inconsistent", "Release Candidate gate must hash-bind the SPDX SBOM"}
     }}) {
         ++checks;
         if (release_candidate_script.find(token) == std::string::npos)
             findings.push_back({"scripts/Test-ReleaseCandidate.ps1", 0, std::string(message)});
     }
 
-    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,17>{{
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,29>{{
         {"webcom-build-package-v1", "build-package verification must emit a versioned machine-readable report"},
         {"Get-PeMachine", "build-package verification must inspect PE machine architecture instead of trusting filenames"},
         {"0xAA64", "build-package verification must understand ARM64 PE machine values"},
@@ -900,23 +1026,165 @@ int main(int argc, char** argv) {
         {"Warnings as errors: ON", "release-ready verification must require native warnings-as-errors"},
         {"Update stable manifest: https://", "release-ready verification must require a compiled HTTPS Stable manifest endpoint"},
         {"compiled publisher pin does not match", "release-ready verification must bind compiled update trust to the expected publisher pin"},
-        {"RequireSignedExecutable", "post-sign verification must support Authenticode identity checks"}
+        {"RequireSignedExecutable", "post-sign verification must support Authenticode identity checks"},
+        {"dependencies.lock.json", "build-package verification must bind the staged package to the source dependency lock"},
+        {"DEPENDENCY-VERIFICATION.json", "build-package verification must require packaged dependency verification evidence"},
+        {"webcom-dependency-verification-v1", "dependency verification evidence must use a versioned schema"},
+        {"officialHashVerified", "release-ready package verification must require official dependency hash evidence"},
+        {"packageSha512Base64", "release-ready package verification must retain the verified WebView2 package SHA512"},
+        {"Verified release dependencies: REQUIRED", "release-ready package verification must prove the build required verified dependencies"},
+        {"Get-PeSecurityFlags", "build-package verification must inspect actual PE mitigation flags"},
+        {"highEntropyVa", "release-ready package verification must require HIGHENTROPYVA in the built PE"},
+        {"dynamicBase", "release-ready package verification must require DYNAMICBASE in the built PE"},
+        {"nxCompat", "release-ready package verification must require NXCOMPAT in the built PE"},
+        {"guardCf", "release-ready package verification must require Guard CF in the built PE"},
+        {"public release document $publicDocument", "release-ready staging must include privacy/security/third-party public documents"}
     }}) {
         ++checks;
         if (build_package_script.find(token) == std::string::npos)
             findings.push_back({"scripts/Verify-BuildPackage.ps1", 0, std::string(message)});
     }
 
-    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,5>{{
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,9>{{
         {"Verify-BuildPackage.ps1", "signed-installer creation must run the strict staged-package verifier"},
         {"pre-sign package integrity verification", "signed-installer creation must fail package integrity before signing"},
         {"post-sign package integrity verification", "signed-installer creation must reverify the package after executable signing"},
         {"signed-dist-verification.json", "signed-installer creation must archive a post-sign package verification report"},
-        {"-RequireSignedExecutable", "post-sign package verification must require Authenticode identity"}
+        {"-RequireSignedExecutable", "post-sign package verification must require Authenticode identity"},
+        {"innoSignCommand", "signed-installer creation must provide Inno a sign tool for Setup/self-copies/uninstaller"},
+        {"--signtool=$innoSignCommand", "Inno compilation must receive the release sign-tool definition"},
+        {"Inno Setup 7", "signed-installer creation must auto-detect the current Inno Setup 7 release line"},
+        {"Inno Setup 6", "signed-installer creation must retain Inno Setup 6 fallback compatibility"}
     }}) {
         ++checks;
         if (signed_installer_script.find(token) == std::string::npos)
             findings.push_back({"scripts/Build-SignedInstaller.ps1", 0, std::string(message)});
+    }
+
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,3>{{
+        {"Build-PublicBeta.ps1", "canonical Release Candidate build wrapper must retain the backwards-compatible implementation"},
+        {"@PSBoundParameters", "Release Candidate wrapper must forward the exact caller-supplied release parameters"},
+        {"Build-ReleaseCandidate.ps1", "Release Candidate source must expose the canonical signed-candidate workflow"}
+    }}) {
+        ++checks;
+        if (release_candidate_build_script.find(token) == std::string::npos)
+            findings.push_back({"scripts/Build-ReleaseCandidate.ps1", 0, std::string(message)});
+    }
+
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,15>{{
+        {"webcom-public-release-v1", "public-release promotion must emit versioned approval evidence"},
+        {"readyForPublicReleaseReview", "public-release promotion must require an RC explicitly ready for final review"},
+        {"memoryGate.required", "public-release promotion must reject a skipped memory gate"},
+        {"workingSetBudgetMiB", "public-release promotion must enforce the approved one-tab memory budget"},
+        {"machineInstall", "public-release promotion must require elevated machine-install QA as well as per-user QA"},
+        {"waived-no-previous-signed-build", "public-release promotion may waive upgrade QA only for a first signed release"},
+        {"Get-AuthenticodeSignature", "public-release promotion must revalidate the final installer signature"},
+        {"ExpectedPublisherSha256", "public-release promotion must bind approval to the publisher certificate pin"},
+        {"Require-PublicHttps", "public-release promotion must require real public HTTPS operational URLs"},
+        {"LicenseMode", "public-release promotion must require an explicit distribution-license decision"},
+        {"OpenSource publication requires an explicit LicenseFile", "open-source publication must require an explicit non-empty license"},
+        {"PUBLIC-RELEASE.json", "public-release promotion must create an unambiguous approval artifact"},
+        {"PUBLIC-RELEASE-SHA256SUMS.txt", "public-release promotion must emit user-verifiable release checksums"},
+        {"approvedForPublicRelease = $true", "approval evidence must explicitly mark the exact Stable artifacts approved"},
+        {"does not upload or publish release artifacts", "public-release approval must remain a local evidence gate rather than silently publishing"}
+    }}) {
+        ++checks;
+        if (public_release_approval_script.find(token) == std::string::npos)
+            findings.push_back({"scripts/Approve-PublicRelease.ps1", 0, std::string(message)});
+    }
+
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,11>{{
+        {"webcom-public-release-run-v1", "one-command release orchestration must emit a versioned local run report"},
+        {"Build-ReleaseCandidate.ps1", "one-command release orchestration must build the exact signed candidate"},
+        {"Test-ReleaseCandidate.ps1", "one-command release orchestration must run the real Windows RC gates"},
+        {"RunMachineInstall=$true", "one-command public release must require elevated machine-install acceptance"},
+        {"WorkingSetBudgetMiB=$WorkingSetBudgetMiB", "one-command public release must keep the mandatory memory budget in the RC call"},
+        {"Approve-PublicRelease.ps1", "one-command release orchestration must run the final promotion gate"},
+        {"New-ReleaseEvidenceBundle.ps1", "one-command release orchestration must archive immutable evidence"},
+        {"publicationPerformed=$false", "one-command release orchestration must record that it never published automatically"},
+        {"NoPreviousSignedBuild", "one-command release orchestration must require explicit previous-build or first-release policy"},
+        {"WindowsBuiltInRole]::Administrator", "one-command public release must require elevation for machine-install QA"},
+        {"Test-PublishedRelease.ps1", "one-command release orchestration must direct operators to post-publication verification"}
+    }}) {
+        ++checks;
+        if (public_release_invoke_script.find(token) == std::string::npos)
+            findings.push_back({"scripts/Invoke-PublicRelease.ps1", 0, std::string(message)});
+    }
+
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,10>{{
+        {"webcom-release-evidence-bundle-v1", "release evidence archive must have a versioned manifest"},
+        {"PUBLIC-RELEASE.json.sha256", "release evidence archive must validate the public-release approval checksum"},
+        {"PUBLIC-RELEASE-SHA256SUMS.txt", "release evidence archive must preserve the user-facing release checksum list"},
+        {"approval.artifacts.installer.path", "release evidence archive must include the exact approved installer"},
+        {"approval.artifacts.stableManifest.path", "release evidence archive must include the exact approved Stable manifest"},
+        {"source-hashes.sha256", "release evidence archive must include the frozen source-manifest identity"},
+        {"dependencies.lock.json", "release evidence archive must include the dependency lock"},
+        {"EVIDENCE-MANIFEST.json", "release evidence archive must emit an internal hash manifest"},
+        {"Compress-Archive", "release evidence archive must create a portable immutable evidence ZIP"},
+        {"copied evidence hash changed", "release evidence archive must rehash every copied item before compression"}
+    }}) {
+        ++checks;
+        if (release_evidence_script.find(token) == std::string::npos)
+            findings.push_back({"scripts/New-ReleaseEvidenceBundle.ps1", 0, std::string(message)});
+    }
+
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,12>{{
+        {"webcom-published-release-health-v1", "post-publication health verification must emit a versioned report"},
+        {"PublicHttps", "post-publication verification must reject non-public/non-HTTPS endpoints"},
+        {"published Stable manifest differs from PUBLIC-RELEASE approval", "live Stable manifest must hash-match final approval"},
+        {"published installer differs from PUBLIC-RELEASE approval", "live installer must hash-match final approval"},
+        {"published installer hash differs from published manifest", "live installer must also match the live manifest hash"},
+        {"Get-AuthenticodeSignature", "post-publication verification must revalidate Authenticode"},
+        {"published installer publisher differs from PUBLIC-RELEASE approval", "post-publication verification must revalidate publisher identity"},
+        {"publicUrls.releaseNotes", "post-publication verification must probe the public release-notes endpoint"},
+        {"request redirected away from HTTPS", "post-publication verification must fail HTTPS downgrade redirects"},
+        {"PassThru=$true", "installer downloads must preserve response metadata while writing to disk"},
+        {"published-release-health.json", "post-publication verification must persist a local health report"},
+        {"$output + '.sha256'", "post-publication health evidence must receive its own checksum"}
+    }}) {
+        ++checks;
+        if (published_release_script.find(token) == std::string::npos)
+            findings.push_back({"scripts/Test-PublishedRelease.ps1", 0, std::string(message)});
+    }
+
+
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,12>{{
+        {"webcom-rollback-candidate-v1", "rollback validation must emit a versioned evidence report"},
+        {"approved Stable WebCom public release", "rollback validation must require prior PUBLIC-RELEASE approval"},
+        {"rollback target $previousVersion must be older", "rollback target must be strictly older than the current release"},
+        {"different publisher certificate", "rollback validation must reject publisher-certificate changes rather than weakening the pin"},
+        {"previous installer SHA-256 differs", "rollback validation must hash-bind the previous installer to its approval"},
+        {"previous Stable manifest SHA-256 differs", "rollback validation must hash-bind the previous manifest to its approval"},
+        {"Get-AuthenticodeSignature", "rollback validation must revalidate Authenticode on the previous installer"},
+        {"previous manifest package URL", "rollback validation must require a public HTTPS package URL"},
+        {"canDowngradeAlreadyInstalledCurrentVersion=$false", "rollback evidence must state that a lower manifest cannot downgrade already-installed current clients"},
+        {"higher-version hotfix", "rollback evidence must direct affected current clients to verified rollback or a higher-version hotfix"},
+        {"This validation does not publish", "rollback validation must remain evidence-only and non-destructive"},
+        {"samePublisherRequired=$true", "rollback report must record the same-publisher policy"}
+    }}) {
+        ++checks;
+        if (rollback_candidate_script.find(token) == std::string::npos)
+            findings.push_back({"scripts/Test-RollbackCandidate.ps1", 0, std::string(message)});
+    }
+
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,13>{{
+        {"webcom-release-withdrawal-v1", "release withdrawal must emit a versioned plan"},
+        {"webcom-incident-evidence-v1", "release withdrawal must emit a versioned incident evidence manifest"},
+        {"WithdrawOnly","release withdrawal must support a withdraw-only path"},
+        {"RestoreLastKnownGood","release withdrawal must support restoring a previously approved release"},
+        {"Test-RollbackCandidate.ps1","restore preparation must invoke the strict rollback-candidate validator"},
+        {"publicationPerformed=$false","incident preparation must record that it never modifies public hosting automatically"},
+        {"published health report refers to a different PUBLIC-RELEASE approval","incident evidence must reject unrelated live-health reports"},
+        {"stable-restore.v2.txt","restore preparation must stage the exact prior approved Stable manifest"},
+        {"lowerVersionManifestCannotDowngradeAlreadyInstalledCurrentRelease=$true","withdrawal evidence must disclose lower-version downgrade limitations"},
+        {"RELEASE-WITHDRAWAL.json.sha256","withdrawal plan must receive its own checksum"},
+        {"INCIDENT-EVIDENCE.json","incident bundle must carry a rehashed evidence manifest"},
+        {"Compress-Archive","incident response must create a portable immutable evidence bundle"},
+        {"No website, CDN, manifest endpoint, installer, or client was changed automatically","incident tooling must remain manual/fail-safe at the publication boundary"}
+    }}) {
+        ++checks;
+        if (release_withdrawal_script.find(token) == std::string::npos)
+            findings.push_back({"scripts/Prepare-ReleaseWithdrawal.ps1", 0, std::string(message)});
     }
 
     const auto cmake_source = ReadAll(root / "CMakeLists.txt");
@@ -928,11 +1196,16 @@ int main(int argc, char** argv) {
     if (cmake_source.find("webcom_download_history_model_tests") == std::string::npos ||
         cmake_source.find("src/download_history_model.cpp") == std::string::npos)
         findings.push_back({"CMakeLists.txt", 0, "Downloads v2 retention/retry policy must stay covered by portable tests and the native browser target"});
-    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,4>{{
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,9>{{
         {"option(WEBCOM_WARNINGS_AS_ERRORS", "native warning-as-error policy must be an explicit CMake option"},
         {"if(MSVC AND WEBCOM_WARNINGS_AS_ERRORS)", "native MSVC warning failures must be enabled by default but diagnostically switchable"},
         {"$<$<COMPILE_LANGUAGE:CXX>:/WX>", "WebCom native targets must compile project warnings as errors by default"},
-        {"/external:anglebrackets;/external:W0", "third-party/system angle-bracket headers must not turn external warnings into WebCom /WX failures"}
+        {"/external:anglebrackets;/external:W0", "third-party/system angle-bracket headers must not turn external warnings into WebCom /WX failures"},
+        {";/GS;/guard:cf;", "native C++ targets must explicitly retain stack-cookie and Control Flow Guard compilation"},
+        {"/DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA /guard:cf /CETCOMPAT", "native link targets must retain ASLR, DEP, CFG and CET compatibility flags"},
+        {"src/security_baseline_model.cpp", "native browser targets must compile the release security-baseline policy"},
+        {"src/security_bootstrap_win32.cpp", "native browser targets must compile the Windows security bootstrap"},
+        {"webcom_security_baseline_model_tests", "release security-baseline policy must retain portable regression coverage"}
     }}) {
         ++checks;
         if (cmake_source.find(token) == std::string::npos) findings.push_back({"CMakeLists.txt", 0, std::string(message)});
@@ -943,18 +1216,129 @@ int main(int argc, char** argv) {
     ++checks;
     if (build_script.find("Test-WindowsAcceptance.ps1") == std::string::npos)
         findings.push_back({"scripts/Build.ps1", 0, "Windows packages must include the acceptance runner used for release sign-off"});
-    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,7>{{
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,13>{{
         {"[switch]$AllowCompilerWarnings", "normal Windows builds must expose an explicit diagnostic-only warning override"},
         {"-DWEBCOM_WARNINGS_AS_ERRORS=$(if ($AllowCompilerWarnings) { 'OFF' } else { 'ON' })", "Build.ps1 must keep /WX enabled unless the diagnostic override is explicit"},
         {"Diagnostic mode: WebCom native /WX is disabled", "warning override must visibly disclose that release warning policy is disabled"},
         {"Do not use this switch for Release Candidate or public-release sign-off", "warning override must not be presented as release-safe"},
         {"Verifying staged Windows package integrity", "Build.ps1 must verify the staged package before ZIP creation"},
         {"Verify-BuildPackage.ps1", "Build.ps1 must use the strict package integrity verifier"},
-        {"PACKAGE-VERIFICATION.json", "Build.ps1 must archive package integrity evidence in the portable package"}
+        {"PACKAGE-VERIFICATION.json", "Build.ps1 must archive package integrity evidence in the portable package"},
+        {"[switch]$RequireVerifiedDependencies", "release builds must support an explicit strict dependency-verification policy"},
+        {"DEPENDENCY-VERIFICATION.json", "Build.ps1 must carry dependency verification into the staged package"},
+        {"Verified release dependencies:", "BUILD-INFO must record whether official dependency verification was required"},
+        {"SECURITY.md", "staged Windows packages must carry the public vulnerability-reporting policy"},
+        {"PRIVACY.md", "staged Windows packages must carry the public privacy statement"},
+        {"Native security hardening:", "BUILD-INFO must record the native process/PE security baseline"}
     }}) {
         ++checks;
         if (build_script.find(token) == std::string::npos) findings.push_back({"scripts/Build.ps1", 0, std::string(message)});
     }
+    const auto security_model_source = ReadAll(root / "src" / "security_baseline_model.cpp");
+    const auto security_model_header = ReadAll(root / "src" / "security_baseline_model.h");
+    const auto security_bootstrap_source = ReadAll(root / "src" / "security_bootstrap_win32.cpp");
+    const auto security_policy_doc = ReadAll(root / "SECURITY.md");
+    const auto privacy_doc = ReadAll(root / "PRIVACY.md");
+    const auto contributing_doc = ReadAll(root / "CONTRIBUTING.md");
+    const auto support_doc = ReadAll(root / "SUPPORT.md");
+    const auto conduct_doc = ReadAll(root / "CODE_OF_CONDUCT.md");
+    const auto pull_request_template = ReadAll(root / ".github" / "PULL_REQUEST_TEMPLATE.md");
+    const auto public_release_doc = ReadAll(root / "docs" / "PUBLIC-RELEASE.md");
+    const auto post_release_doc = ReadAll(root / "docs" / "POST-RELEASE.md");
+    const auto incident_response_doc = ReadAll(root / "docs" / "INCIDENT-RESPONSE.md");
+    const auto background_updates_doc = ReadAll(root / "docs" / "BACKGROUND-UPDATES.md");
+    const auto github_workflow = ReadAll(root / ".github" / "workflows" / "windows.yml");
+    const auto dependabot_config = ReadAll(root / ".github" / "dependabot.yml");
+    const auto gitignore_source = ReadAll(root / ".gitignore");
+    const auto gitattributes_source = ReadAll(root / ".gitattributes");
+    for (const auto& [source, token, file, message] : std::array<std::tuple<std::string_view,std::string_view,std::string_view,std::string_view>,35>{{
+        {security_model_header, "safe_dll_search = true", "src/security_baseline_model.h", "security policy must require safe DLL search"},
+        {security_bootstrap_source, "SetDefaultDllDirectories", "src/security_bootstrap_win32.cpp", "Windows startup must remove unsafe default DLL-search locations"},
+        {security_bootstrap_source, "HeapEnableTerminationOnCorruption", "src/security_bootstrap_win32.cpp", "Windows startup must request fail-closed heap-corruption handling"},
+        {security_bootstrap_source, "ProcessImageLoadPolicy", "src/security_bootstrap_win32.cpp", "Windows startup must set image-load mitigations"},
+        {security_bootstrap_source, "NoRemoteImages", "src/security_bootstrap_win32.cpp", "process image policy must reject remote images"},
+        {security_bootstrap_source, "NoLowMandatoryLabelImages", "src/security_bootstrap_win32.cpp", "process image policy must reject low-integrity images"},
+        {main_source, "ApplyProcessSecurityBaseline", "src/main.cpp", "process security baseline must execute before browser initialization"},
+        {security_policy_doc, "GitHub Private Vulnerability Reporting", "SECURITY.md", "public source must document private vulnerability reporting"},
+        {privacy_doc, "does **not** include a WebCom analytics or telemetry upload service", "PRIVACY.md", "public privacy statement must disclose the no-WebCom-telemetry behavior"},
+        {privacy_doc, "Microsoft Edge WebView2 Runtime", "PRIVACY.md", "privacy statement must identify the WebView2 privacy boundary"},
+        {privacy_doc, "WebCom/3.0.0 updater", "PRIVACY.md", "privacy statement must disclose background update network metadata"},
+        {background_updates_doc, "six-hour cadence", "docs/BACKGROUND-UPDATES.md", "background update documentation must disclose the normal check cadence"},
+        {background_updates_doc, "Installing an update is never automatic.", "docs/BACKGROUND-UPDATES.md", "background update documentation must preserve explicit installer launch"},
+        {background_updates_doc, "first two failures receive quick retries", "docs/BACKGROUND-UPDATES.md", "background update documentation must disclose bounded retry behavior"},
+        {contributing_doc, "Do not weaken", "CONTRIBUTING.md", "contributor policy must protect release/security gates"},
+        {support_doc, "Security issues", "SUPPORT.md", "public source must route security reports away from ordinary support issues"},
+        {conduct_doc, "constructive technical collaboration", "CODE_OF_CONDUCT.md", "public repository must document baseline community conduct expectations"},
+        {pull_request_template, "Security/privacy/release implications were reviewed", ".github/PULL_REQUEST_TEMPLATE.md", "public pull requests must prompt contributors to review release/security/privacy impact"},
+        {public_release_doc, "Canonical three-phase release flow", "docs/PUBLIC-RELEASE.md", "public release guide must document build, Windows RC, and final promotion as separate phases"},
+        {public_release_doc, "Human sign-off that code cannot automate", "docs/PUBLIC-RELEASE.md", "public release guide must identify ownership/legal/operational sign-off"},
+        {post_release_doc, "One-command local release validation", "docs/POST-RELEASE.md", "post-release guide must document the fail-closed one-command local ceremony"},
+        {post_release_doc, "After manual publication", "docs/POST-RELEASE.md", "post-release guide must require live manifest/installer verification after manual publication"},
+        {incident_response_doc, "Prepare-ReleaseWithdrawal.ps1", "docs/INCIDENT-RESPONSE.md", "incident runbook must document the non-destructive withdrawal workflow"},
+        {incident_response_doc, "Test-RollbackCandidate.ps1", "docs/INCIDENT-RESPONSE.md", "incident runbook must document last-known-good rollback validation"},
+        {incident_response_doc, "does **not** automatically downgrade", "docs/INCIDENT-RESPONSE.md", "incident runbook must disclose the lower-version manifest downgrade limitation"},
+        {incident_response_doc, "Do not weaken version checks or publisher verification", "docs/INCIDENT-RESPONSE.md", "incident runbook must forbid bypassing release security to force rollback"},
+        {github_workflow, "portable-sanitizers", ".github/workflows/windows.yml", "CI must retain ASan/UBSan portable regression coverage"},
+        {github_workflow, "persist-credentials: false", ".github/workflows/windows.yml", "CI checkout must not retain unnecessary repository credentials"},
+        {dependabot_config, "package-ecosystem: github-actions", ".github/dependabot.yml", "GitHub Actions dependencies must have update monitoring"},
+        {github_workflow, "node --test tests/ad_blocker_tests.cjs", ".github/workflows/windows.yml", "portable CI must run bundled blocker script tests"},
+        {gitignore_source, "/build-*/", ".gitignore", "public repository must ignore the actual portable/sanitizer build directories"},
+        {gitignore_source, "/release/", ".gitignore", "public repository must not accidentally commit signed release output"},
+        {gitignore_source, "/acceptance/", ".gitignore", "public repository must not accidentally commit local acceptance evidence"},
+        {gitattributes_source, "*.cmd text eol=lf", ".gitattributes", "text files must keep deterministic LF bytes so source-manifest hashes survive cross-platform Git checkouts"},
+        {gitattributes_source, "*.png binary", ".gitattributes", "binary assets must be protected from line-ending conversion"}
+    }}) {
+        ++checks;
+        if (source.find(token) == std::string::npos) findings.push_back({std::string(file), 0, std::string(message)});
+    }
+
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,7>{{
+        {"webcom-dependencies-v1", "dependency lock must use a versioned schema"},
+        {"Microsoft.Web.WebView2", "dependency lock must name the WebView2 NuGet package"},
+        {"1.0.4314.35", "dependency lock must pin the current WebView2 SDK version"},
+        {"api.nuget.org/v3-flatcontainer", "dependency lock must pin the official HTTPS NuGet package source"},
+        {"registration5-gz-semver2", "dependency lock must identify an official NuGet registration hash source"},
+        {"SHA512", "dependency lock must declare the official package hash algorithm"},
+        {"releaseRequiresOfficialCatalogHash", "dependency lock must state that public releases require official catalog hash evidence"}
+    }}) {
+        ++checks;
+        if (dependency_lock.find(token) == std::string::npos)
+            findings.push_back({"dependencies.lock.json", 0, std::string(message)});
+    }
+
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,9>{{
+        {"dependencies.lock.json", "WebView2 restore must consume the source dependency lock"},
+        {"[switch]$RequireOfficialHash", "WebView2 restore must support strict official-hash mode"},
+        {"Release dependency verification cannot use -SdkDir", "strict release dependency verification must reject unverifiable offline SDK directories"},
+        {"packageHashAlgorithm", "WebView2 restore must read official NuGet catalog hash metadata"},
+        {"package SHA512 does not match NuGet catalog metadata", "WebView2 restore must fail package/catalog SHA512 mismatches"},
+        {"requires the official NuGet catalog SHA512", "strict release restore must fail if official hash metadata is unavailable"},
+        {"webcom-dependency-verification-v1", "WebView2 restore must emit versioned dependency evidence"},
+        {"packageSha512Base64", "dependency evidence must record the actual WebView2 package SHA512"},
+        {"lockSha256", "dependency evidence must bind back to dependencies.lock.json"}
+    }}) {
+        ++checks;
+        if (restore_webview_script.find(token) == std::string::npos)
+            findings.push_back({"scripts/Restore-WebView2.ps1", 0, std::string(message)});
+    }
+
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,10>{{
+        {"webcom-release-provenance-v1", "release provenance must use a versioned schema"},
+        {"SPDX-2.3", "release generation must emit an SPDX 2.3 SBOM"},
+        {"docs/source-hashes.sha256", "provenance must bind the release to the source integrity manifest"},
+        {"dependencies.lock.json", "provenance must bind the release to the dependency lock"},
+        {"packageSha512Base64", "provenance must include verified dependency package identity"},
+        {"signedDist", "provenance must bind the signed staged executable report"},
+        {"installerSha256", "provenance must bind the signed installer hash"},
+        {"manifestSha256", "provenance must bind the release-manifest hash"},
+        {"sbomSha256", "provenance must hash-bind the generated SBOM"},
+        {"DEPENDS_ON", "SPDX output must express WebCom's WebView2 dependency relationship"}
+    }}) {
+        ++checks;
+        if (provenance_script.find(token) == std::string::npos)
+            findings.push_back({"scripts/New-ReleaseProvenance.ps1", 0, std::string(message)});
+    }
+
     const auto public_beta_script = ReadAll(root / "scripts" / "Build-PublicBeta.ps1");
     ++checks;
     if (public_beta_script.find("Test-ReleaseCandidate.ps1") == std::string::npos ||
@@ -963,9 +1347,36 @@ int main(int argc, char** argv) {
     ++checks;
     if (public_beta_script.find("signed-dist-verification.json") == std::string::npos ||
         public_beta_script.find("Build verification:") == std::string::npos)
-        findings.push_back({"scripts/Build-PublicBeta.ps1", 0, "public-beta release generation must retain and surface the signed staged-package verification report"});
+        findings.push_back({"scripts/Build-PublicBeta.ps1", 0, "legacy-compatible Release Candidate builder must retain and surface the signed staged-package verification report"});
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,4>{{
+        {"-RequireVerifiedDependencies", "Release Candidate builds must require official dependency verification"},
+        {"New-ReleaseProvenance.ps1", "Release Candidate generation must emit provenance and SBOM evidence"},
+        {"release-provenance.json", "Release Candidate generation must surface the provenance artifact"},
+        {"webcom.spdx.json", "Release Candidate generation must surface the SPDX SBOM"}
+    }}) {
+        ++checks;
+        if (public_beta_script.find(token) == std::string::npos)
+            findings.push_back({"scripts/Build-PublicBeta.ps1", 0, std::string(message)});
+    }
     const auto resource_script = ReadAll(root / "resources" / "webcom.rc");
     const auto installer_script = ReadAll(root / "installer" / "WebCom.iss");
+    for (const auto& [token, message] : std::array<std::pair<std::string_view,std::string_view>,9>{{
+        {"PrivilegesRequired=lowest", "public installer must default to least-privilege per-user installation"},
+        {"PrivilegesRequiredOverridesAllowed=dialog commandline", "installer must retain explicit elevated machine-install override"},
+        {"MinVersion=10.0", "public installer must reject unsupported pre-Windows-10 systems"},
+        {"SetupIconFile=..\\resources\\webcom.ico", "public installer must use the WebCom brand icon"},
+        {"PRIVACY.md", "installed application must carry the public privacy statement"},
+        {"SECURITY.md", "installed application must carry the vulnerability-reporting policy"},
+        {"THIRD-PARTY-NOTICES.md", "installed application must carry third-party notices"},
+        {"SignTool=webcom", "Inno Setup must sign Setup/self-copies/uninstaller during compilation"},
+        {"SignedUninstaller=yes", "public installer must deploy a signed uninstaller"}
+    }}) {
+        ++checks;
+        if (installer_script.find(token) == std::string::npos) findings.push_back({"installer/WebCom.iss", 0, std::string(message)});
+    }
+    ++checks;
+    if (installer_script.find("[UninstallDelete]") != std::string::npos || installer_script.find("filesandordirs; Name: \"{app}\"") != std::string::npos)
+        findings.push_back({"installer/WebCom.iss", 0, "installer must not blanket-delete a custom install directory during uninstall"});
     for (const auto& [text, token, file, message] : std::array<std::tuple<std::string_view,std::string_view,std::string_view,std::string_view>,7>{{
         {cmake_source, "project(WebCom VERSION 3.0.0", "CMakeLists.txt", "current WebCom product version must remain 3.0.0"},
         {app_source, "kWebComVersion = \"3.0.0\"", "src/app.cpp", "runtime product version must remain 3.0.0"},

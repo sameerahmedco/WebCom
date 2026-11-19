@@ -1,6 +1,6 @@
 # WebCom v3 roadmap
 
-WebCom v3 has completed the planned public-beta feature pass. Latest-39 created the signed Release Candidate gate, Latest-40/41 hardened Windows accessibility, and Latest-42 folds concrete failures from the older real MSVC build logs into the current source-preflight and Windows UI harness. Further engineering changes should now be driven by the next real Windows/MSVC/WebView2/signed-installer/accessibility run rather than feature expansion.
+WebCom v3 has completed the planned source-side public-release hardening. The repository now includes a signed Release Candidate build flow, real-Windows RC acceptance, supply-chain/SBOM/provenance evidence, runtime/PE/installer security hardening, sanitizer CI, public privacy/security/support policies, and a final public-release promotion gate. Latest-47 adds the release-operations layer, Latest-48 adds incident/withdrawal readiness, Latest-49 closes installer-scope/cancelled-install recovery, and Latest-50 adds opt-in background signed-manifest checking plus optional verified staging while keeping installation explicit. Further code changes should be driven by failures from the real Windows RC/live-publication/update-install checks or post-release security/compatibility findings rather than feature expansion.
 
 ## Next priorities
 
@@ -44,3 +44,10 @@ WebCom v3 has completed the planned public-beta feature pass. Latest-39 created 
 
 - Log-driven MSVC regression hardening implemented: known annotation `LONG`/`int` clamp ambiguity, GDI+ line-overload ambiguity, brittle UI-test startup aggregates, and workspace command-ID collisions are guarded before the main Windows compile.
 - Package-integrity hardening implemented: staged PE/version/source-manifest/content validation, release trust-input checks, pre/post-sign executable verification, and signed-dist-to-installed-executable SHA-256 identity binding.
+- Supply-chain/provenance hardening implemented: source-tracked WebView2 lock, official NuGet SHA-512 requirement for public builds, staged dependency evidence, SPDX 2.3 SBOM, and RC-verified source/dependency/installer/manifest provenance.
+
+- Latest-48 closes the source-side post-release incident gap with approved-release rollback validation and non-destructive withdrawal/restore evidence tooling. Future changes should be driven by real Windows RC results, production incidents, security reports, or measured user-impact regressions rather than speculative feature growth.
+
+- Latest-49 update-install scope hardening implemented: current-executable-bound HKCU/HKLM scope detection, non-elevated `/CURRENTUSER` updates, elevated `/ALLUSERS` machine updates, fail-closed portable/ambiguous launch, and automatic recovery of cancelled/incomplete install transactions to verified staged state. Real Windows acceptance remains required.
+
+- Latest-50 background update readiness implemented: persisted six-hour opt-in checks, separate verified-download opt-in, bounded quick retry/fallback cadence, multi-profile network de-duplication, conservative settings migration, and explicit installer launch. Real Windows network/timer/UAC acceptance remains required.

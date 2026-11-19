@@ -44,6 +44,33 @@ function Expected-Machine([string]$Architecture) {
     if ($Architecture -eq 'ARM64') { return [UInt16]0xAA64 }
     return [UInt16]0x8664
 }
+function Get-PeSecurityFlags([string]$Path) {
+    $stream = [System.IO.File]::Open($Path,[System.IO.FileMode]::Open,[System.IO.FileAccess]::Read,[System.IO.FileShare]::Read)
+    try {
+        $reader = New-Object System.IO.BinaryReader($stream)
+        if ($stream.Length -lt 0x100) { Fail "PE file is too small for security inspection: $Path" }
+        $stream.Position = 0x3C
+        $peOffset = $reader.ReadInt32()
+        if ($peOffset -lt 0 -or ($peOffset + 0x70) -gt $stream.Length) { Fail "PE header offset is invalid for security inspection: $Path" }
+        $stream.Position = $peOffset
+        if ($reader.ReadUInt32() -ne 0x00004550) { Fail "PE signature is invalid for security inspection: $Path" }
+        [void]$reader.ReadUInt16() # machine
+        [void]$reader.ReadUInt16() # sections
+        $stream.Position = $peOffset + 24
+        $magic = $reader.ReadUInt16()
+        if ($magic -ne 0x20B -and $magic -ne 0x10B) { Fail "unsupported PE optional-header magic for security inspection: $Path" }
+        $stream.Position = $peOffset + 24 + 0x46
+        $dllCharacteristics = $reader.ReadUInt16()
+        return [ordered]@{
+            dllCharacteristics = ('0x{0:x4}' -f $dllCharacteristics)
+            highEntropyVa = (($dllCharacteristics -band 0x0020) -ne 0)
+            dynamicBase = (($dllCharacteristics -band 0x0040) -ne 0)
+            nxCompat = (($dllCharacteristics -band 0x0100) -ne 0)
+            guardCf = (($dllCharacteristics -band 0x4000) -ne 0)
+        }
+    }
+    finally { $stream.Dispose() }
+}
 function Test-Version([string]$Actual, [string]$Expected) {
     $numeric = ($Expected -split '-',2)[0]
     return $Actual -match ('^' + [regex]::Escape($numeric) + '(?:\.0)?$')
@@ -112,6 +139,10 @@ if (Test-Path -LiteralPath $uiTests -PathType Leaf) {
     if ($machine -ne $expectedMachine) { Fail "PE architecture mismatch for WebCom-ui-tests.exe: 0x$($machine.ToString('x4')) expected $ExpectedArchitecture" }
 }
 
+$webComSecurity = Get-PeSecurityFlags $webComExe
+$uiSecurity = $null
+if (Test-Path -LiteralPath $uiTests -PathType Leaf) { $uiSecurity = Get-PeSecurityFlags $uiTests }
+
 $versionInfo = (Get-Item -LiteralPath $webComExe).VersionInfo
 if (-not (Test-Version $versionInfo.ProductVersion $ExpectedVersion)) { Fail "ProductVersion is '$($versionInfo.ProductVersion)', expected $ExpectedVersion" }
 if (-not (Test-Version $versionInfo.FileVersion $ExpectedVersion)) { Fail "FileVersion is '$($versionInfo.FileVersion)', expected $ExpectedVersion" }
@@ -128,6 +159,10 @@ if ($RequireSignedExecutable) {
     if ($signedPublisher -ne $ExpectedPublisherSha256.ToLowerInvariant()) { Fail 'signed WebCom.exe publisher fingerprint does not match ExpectedPublisherSha256' }
 }
 
+foreach ($publicDocument in @('PRIVACY.md','SECURITY.md','THIRD-PARTY-NOTICES.md')) {
+    Resolve-RequiredFile (Join-Path $dist $publicDocument) "public release document $publicDocument" | Out-Null
+}
+
 $blockerRoot = Join-Path $dist 'extensions\webcom-ad-blocker'
 $blockerFiles = @('manifest.json','network-rules.json','site-config.js','web-ads.css','youtube-player.js','youtube.css')
 foreach ($name in $blockerFiles) { Resolve-RequiredFile (Join-Path $blockerRoot $name) "bundled blocker asset $name" | Out-Null }
@@ -142,6 +177,23 @@ foreach ($pattern in $bannedPatterns) {
     if ($found) { Fail "compiler/debug artifact leaked into package: $($found.FullName)" }
 }
 
+$dependencyLockPath = Resolve-RequiredFile (Join-Path $root 'dependencies.lock.json') 'dependency lock'
+$packagedDependencyLock = Resolve-RequiredFile (Join-Path $dist 'docs\dependencies.lock.json') 'packaged dependency lock'
+$dependencyVerificationPath = Resolve-RequiredFile (Join-Path $dist 'docs\DEPENDENCY-VERIFICATION.json') 'packaged dependency verification'
+$dependencyLockSha256 = (Get-FileHash -LiteralPath $dependencyLockPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$packagedLockSha256 = (Get-FileHash -LiteralPath $packagedDependencyLock -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($packagedLockSha256 -ne $dependencyLockSha256) { Fail 'packaged dependency lock differs from the source dependency lock' }
+$dependencyLock = Get-Content -LiteralPath $dependencyLockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($dependencyLock.schema -ne 'webcom-dependencies-v1') { Fail 'dependency lock has an unsupported schema' }
+$webViewDependency = @($dependencyLock.dependencies | Where-Object { $_.packageId -eq 'Microsoft.Web.WebView2' })
+if ($webViewDependency.Count -ne 1) { Fail 'dependency lock must contain exactly one Microsoft.Web.WebView2 record' }
+$webViewDependency = $webViewDependency[0]
+$dependencyVerification = Get-Content -LiteralPath $dependencyVerificationPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($dependencyVerification.schema -ne 'webcom-dependency-verification-v1') { Fail 'dependency verification has an unexpected schema' }
+if ($dependencyVerification.lockSha256 -ne $dependencyLockSha256) { Fail 'dependency verification was not produced from the current dependency lock' }
+if ($dependencyVerification.packageId -ne $webViewDependency.packageId -or $dependencyVerification.version -ne $webViewDependency.version) { Fail 'dependency verification identity/version differs from dependencies.lock.json' }
+if ($dependencyVerification.packageUrl -ne $webViewDependency.packageUrl) { Fail 'dependency verification package URL differs from dependencies.lock.json' }
+
 $buildInfoPath = Resolve-RequiredFile (Join-Path $dist 'docs\BUILD-INFO.txt') 'packaged BUILD-INFO'
 $buildInfo = Get-Content -LiteralPath $buildInfoPath -Raw -Encoding UTF8
 if ($buildInfo -notmatch [regex]::Escape("Target: $ExpectedArchitecture Windows; configuration: $ExpectedConfiguration")) {
@@ -155,6 +207,14 @@ if ($RequireReleaseReady) {
     if ($buildInfo -notmatch '(?m)^Warnings as errors: ON$') { Fail 'release-ready package must have native warnings-as-errors enabled' }
     if ($buildInfo -notmatch '(?m)^Update stable manifest: https://\S+$') { Fail 'release-ready package must embed a compact HTTPS Stable update manifest endpoint' }
     if ($buildInfo -notmatch '(?m)^Publisher SHA256: (?<publisher>[0-9A-Fa-f]{64})$') { Fail 'release-ready package must record the compiled publisher SHA-256 pin' }
+    if ($buildInfo -notmatch '(?m)^Verified release dependencies: REQUIRED$') { Fail 'release-ready package must require official dependency verification' }
+    if ($buildInfo -notmatch '(?m)^Native security hardening: /GS /guard:cf /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA /CETCOMPAT; safe DLL search \+ heap/image-load mitigations at startup\.$') { Fail 'release-ready package does not record the required native security baseline' }
+    foreach ($flag in @('highEntropyVa','dynamicBase','nxCompat','guardCf')) {
+        if (-not [bool]$webComSecurity[$flag]) { Fail "release-ready WebCom.exe is missing PE security flag: $flag" }
+        if ($RequireUiTests -and $uiSecurity -and -not [bool]$uiSecurity[$flag]) { Fail "release-ready WebCom-ui-tests.exe is missing PE security flag: $flag" }
+    }
+    if (-not [bool]$dependencyVerification.officialHashVerified -or $dependencyVerification.source -ne 'nuget') { Fail 'release-ready package requires WebView2 NuGet SHA512 verification against official catalog metadata' }
+    if (-not $dependencyVerification.packageSha512Base64 -or $dependencyVerification.packageSha512Base64 -ne $dependencyVerification.catalogSha512Base64) { Fail 'release-ready WebView2 package SHA512 evidence is incomplete or inconsistent' }
     $compiledPublisher = $Matches.publisher.ToLowerInvariant()
     if ($ExpectedPublisherSha256 -and $compiledPublisher -ne $ExpectedPublisherSha256.ToLowerInvariant()) { Fail 'compiled publisher pin does not match the signer expected for this release' }
 }
@@ -171,6 +231,8 @@ $summary = [ordered]@{
     productVersion = $versionInfo.ProductVersion
     fileVersion = $versionInfo.FileVersion
     sourceManifestEntries = $sourceManifestEntries
+    dependencyLockSha256 = $dependencyLockSha256
+    dependencyVerification = [ordered]@{ schema=$dependencyVerification.schema; packageId=$dependencyVerification.packageId; version=$dependencyVerification.version; source=$dependencyVerification.source; officialHashVerified=[bool]$dependencyVerification.officialHashVerified; packageSha512Base64=$dependencyVerification.packageSha512Base64; headerSha256=$dependencyVerification.headerSha256; x64LoaderSha256=$dependencyVerification.x64LoaderSha256; arm64LoaderSha256=$dependencyVerification.arm64LoaderSha256 }
     testsRequired = [bool]$RequireTestsPassed
     releaseReadyRequired = [bool]$RequireReleaseReady
     signedExecutableRequired = [bool]$RequireSignedExecutable
@@ -180,6 +242,7 @@ $summary = [ordered]@{
     uiHarnessPresent = (Test-Path -LiteralPath $uiTests -PathType Leaf)
     executable = [ordered]@{ path=$webComExe; sha256=(Get-FileHash -LiteralPath $webComExe -Algorithm SHA256).Hash.ToLowerInvariant(); bytes=(Get-Item -LiteralPath $webComExe).Length }
     webView2Loader = [ordered]@{ path=$loaderDll; sha256=(Get-FileHash -LiteralPath $loaderDll -Algorithm SHA256).Hash.ToLowerInvariant(); bytes=(Get-Item -LiteralPath $loaderDll).Length }
+    peSecurity = [ordered]@{ webCom=$webComSecurity; uiHarness=$uiSecurity }
     blocker = [ordered]@{ manifestVersion=[int]$manifest.manifest_version; files=$blockerFiles }
 }
 if ($summary.uiHarnessPresent) {

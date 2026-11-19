@@ -1,0 +1,19 @@
+{
+  "schema": "webcom-dependencies-v1",
+  "dependencies": [
+    {
+      "name": "Microsoft.Web.WebView2",
+      "ecosystem": "NuGet",
+      "packageId": "Microsoft.Web.WebView2",
+      "version": "1.0.4314.35",
+      "packageUrl": "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.4314.35/microsoft.web.webview2.1.0.4314.35.nupkg",
+      "registrationBases": [
+        "https://api.nuget.org/v3/registration5-gz-semver2",
+        "https://api.nuget.org/v3/registration5-semver1"
+      ],
+      "officialHashAlgorithm": "SHA512",
+      "releaseRequiresOfficialCatalogHash": true,
+      "runtimeDistribution": "Microsoft Edge WebView2 Evergreen Runtime is installed separately"
+    }
+  ]
+}

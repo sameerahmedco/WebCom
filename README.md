@@ -13,7 +13,7 @@
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4">
   <img alt="Language" src="https://img.shields.io/badge/C%2B%2B-20-00599c">
   <img alt="Renderer" src="https://img.shields.io/badge/renderer-WebView2-0f9d58">
-  <img alt="Status" src="https://img.shields.io/badge/status-public%20beta-f0a500">
+  <img alt="Status" src="https://img.shields.io/badge/status-release%20candidate-f0a500">
 </p>
 
 ---
@@ -63,7 +63,8 @@ We focus on:
 - Crash recovery
 - Actionable native notifications for completed downloads and available updates; download completion can open the finished file and update availability opens the Updates page
 - Privacy-safe native **Report a Problem** page with a copyable report template, diagnostics/recovery export actions, data-folder access, and an explicit no-automatic-upload boundary
-- Safe update checks
+- Opt-in background update checks on a persisted six-hour cadence, optional automatic **verified** installer downloads, and scope-preserving user-triggered install/rollback; installer launch is never silent (per-user stays non-elevated, per-machine requires administrator approval)
+- Post-release incident response with approved last-known-good rollback validation and non-destructive withdrawal evidence
 - Verified rollback support
 - Stable/Beta channels
 - Accessibility support with custom tab-strip MSAA semantics plus a native-client MSAA bridge for painted browser-page actions: visible actions expose push-button roles, accessible names, screen bounds, hit testing, focus events and default activation while WebCom preserves the standard Win32 child-control tree; keyboard focus rings, live Windows High Contrast composition, and effective Windows/profile reduced motion remain supported
@@ -122,6 +123,8 @@ Portable C++ models are also tested independently with non-Windows compilers. Na
 Latest-43 makes the native MSVC browser and Windows UI harness **warnings-as-errors by default** (`/W4 /WX`). Third-party/system angle-bracket headers are treated as external at warning level 0 so the release policy targets WebCom-owned code. `build.cmd -AllowCompilerWarnings` exists only for diagnosis and is explicitly not release-signoff safe; the Windows acceptance runner still scans repository-source warning lines after the build.
 
 Latest-44 adds a strict **build-package integrity gate** before portable ZIP creation and before/after executable signing. It verifies PE architecture, Windows version metadata, bundled blocker assets, source-manifest freshness, absence of compiler/debug artifacts, release trust inputs, and signed executable identity. Release Candidate fresh-install QA then proves the installer contains that exact signed `WebCom.exe`.
+Latest-45 extends that chain to the build inputs: `dependencies.lock.json` pins the WebView2 SDK source/version, public releases require the downloaded NuGet package SHA-512 to match official NuGet catalog metadata, and the release flow emits an SPDX 2.3 SBOM plus `webcom-release-provenance-v1` tying source, dependency, signed executable, installer, and update-manifest hashes together.
+The consolidated public-release pass adds fail-closed Win32 process mitigations, PE hardening verification, least-privilege installer defaults, signed Inno Setup/uninstaller handling, ASan/UBSan CI, public privacy/security/support/contributor policies, and `Approve-PublicRelease.ps1`. That last gate requires the exact Windows-approved RC, public operational URLs, explicit licensing mode, and creates `PUBLIC-RELEASE.json` plus `PUBLIC-RELEASE-SHA256SUMS.txt`; it never uploads artifacts itself.
 
 For release-candidate Windows builds, `scripts/Test-WindowsAcceptance.ps1` performs the clean MSVC/runtime gate. Latest-39 adds `scripts/Test-ReleaseCandidate.ps1`, which combines that result with signed release-matrix verification, signed fresh-install/runtime/uninstall QA, the default 300 MiB one-tab memory target, and optional previous-to-current installer upgrade/profile-compatibility testing. Signed artifacts are not considered approved merely because they were generated.
 
@@ -149,7 +152,7 @@ Internal persistence/update schema numbers are intentionally independent from th
 
 ## Project status
 
-**WebCom v3 is currently a public-beta codebase in Release Candidate hardening.** Latest-39 provides the single Windows gate for the exact signed build; Latest-40 hardens Windows accessibility/DPI behavior; Latest-41 adds MSAA semantics for painted native-page actions, and Latest-42 hardens the exact MSVC compile-regression classes found in the older real Windows build logs, Latest-43 enforces warning-clean native builds, and Latest-44 binds clean source/package/signer/installer executable identity before release approval. The codebase should not be labeled release-ready until the gate actually passes on Windows, including multi-DPI, High Contrast, reduced-motion, keyboard, and assistive-technology acceptance.
+**WebCom v3 is Release Candidate source.** The source-side public-release hardening is consolidated: warning-clean MSVC policy, process/PE mitigations, accessibility/DPI guards, least-privilege signed installation, safe uninstall, exact package identity, locked/verified WebView2 supply chain, SPDX/provenance evidence, sanitizer CI, public privacy/security policies, a final public-release promotion gate, and post-release incident/withdrawal evidence tooling. A binary is **not** a public release until the exact signed installer passes the real Windows RC and final promotion gate. Latest-47 adds `Invoke-PublicRelease.ps1` to run build → RC → approval → evidence in one elevated Windows workflow; Latest-48 adds `Test-RollbackCandidate.ps1` and `Prepare-ReleaseWithdrawal.ps1` so a published release can be withdrawn or a previously approved last-known-good release can be prepared for manual restoration without bypassing publisher/version policy. `Test-PublishedRelease.ps1` separately verifies the exact manifest/installer and public HTTPS pages after manual publication.
 
 ## Documentation
 
@@ -161,10 +164,21 @@ Internal persistence/update schema numbers are intentionally independent from th
 - **[Validation](docs/VALIDATION.md)**
 - **[Windows memory acceptance](docs/MEMORY-ACCEPTANCE.md)**
 - **[Windows release acceptance](docs/WINDOWS-ACCEPTANCE.md)**
+- **[Update installation security](docs/UPDATE-INSTALL-SECURITY.md)**
+- **[Background updates](docs/BACKGROUND-UPDATES.md)**
 - **[MSVC build regression notes](docs/MSVC-BUILD-REGRESSION.md)**
 - **[Release Candidate gate](docs/RELEASE-CANDIDATE.md)**
 - **[Build-package integrity](docs/BUILD-PACKAGE-INTEGRITY.md)**
-- **[Public beta checklist](docs/PUBLIC-BETA-CHECKLIST.md)**
+- **[Supply chain & provenance](docs/SUPPLY-CHAIN.md)**
+- **[Public release gate](docs/PUBLIC-RELEASE.md)**
+- **[Publication and post-release verification](docs/POST-RELEASE.md)**
+- **[Release incident response](docs/INCIDENT-RESPONSE.md)**
+- **[Public release checklist](docs/PUBLIC-RELEASE-CHECKLIST.md)**
+- **[Privacy](PRIVACY.md)**
+- **[Security policy](SECURITY.md)**
+- **[Support](SUPPORT.md)**
+- **[Contributing](CONTRIBUTING.md)**
+- **[Community conduct](CODE_OF_CONDUCT.md)**
 
 ## Contributing
 

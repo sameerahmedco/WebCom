@@ -15,6 +15,14 @@ struct ReleaseRuntimeConfig {
     std::string publisher_sha256;
 };
 
+enum class UpdateInstallScope { Unknown, PerUser, PerMachine };
+
+struct UpdateInstallerLaunchPolicy {
+    bool elevate = false;
+    std::string install_mode_argument;
+    bool operator==(const UpdateInstallerLaunchPolicy&) const = default;
+};
+
 enum class UpdateCheckStatus {
     EndpointNotConfigured,
     InvalidConfiguration,
@@ -33,6 +41,8 @@ struct UpdateCheckEvaluation {
 };
 
 bool IsTrustedPublisherFingerprint(std::string_view value);
+std::string_view UpdateInstallScopeName(UpdateInstallScope scope);
+std::optional<UpdateInstallerLaunchPolicy> InstallerLaunchPolicyForScope(UpdateInstallScope scope);
 std::optional<std::string> ManifestUrlForChannel(const ReleaseRuntimeConfig& config,
                                                   ReleaseChannel channel);
 UpdateCheckEvaluation EvaluateUpdateManifest(std::string_view current_version,

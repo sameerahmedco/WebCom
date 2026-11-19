@@ -908,7 +908,7 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
             {L"Default browser", default_browser?L"Windows currently opens HTTP/HTTPS links with WebCom.":L"Windows Settings keeps the final default-browser choice under your control.", progress.default_browser, OpenDefaultApps, default_browser?L"Open settings":L"Set up"},
             {L"Bookmarks", progress.bookmarks_ready?std::to_wstring(bookmarks_.size())+L" bookmark"+(bookmarks_.size()==1?L"":L"s")+L" ready in this profile.":L"Import an HTML bookmarks file from another browser when you are ready.", progress.bookmarks_ready, ImportBookmarks, progress.bookmarks_ready?L"Import more":L"Import"},
             {L"Workspaces", progress.workspaces_ready?std::to_wstring(workspaces_.size())+L" workspaces ready for separate projects.":L"Create another workspace to separate work, personal browsing or projects.", progress.workspaces_ready, WorkspaceMenu, progress.workspaces_ready?L"Manage":L"Create"},
-            {L"Update checks", progress.updates_ready?L"Release checks are enabled; downloads and installs remain explicit.":L"Choose Stable/Beta and whether WebCom should check for releases.", progress.updates_ready, UpdatesPage, L"Updates"}
+            {L"Update checks", progress.updates_ready?L"Release checks are enabled; verified downloads are optional and installs remain explicit.":L"Choose Stable/Beta and whether WebCom should check for releases.", progress.updates_ready, UpdatesPage, L"Updates"}
         };
         for(const auto& row_data:setup_rows){
             const RECT row{left,y,right,y+D(72)};Rounded(dc,row,kSurface,kBorder,D(14));
@@ -1094,17 +1094,23 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
         Icon(dc,{channel_row.right-D(32),channel_row.top+D(26),channel_row.right-D(16),channel_row.top+D(42)},Glyph::Forward,kMuted);add_action(channel_row,UpdateChannelMenu,L"Release channel");
         y=channel_row.bottom+D(24);
     } else if (page == InternalPage::Updates) {
-        draw_header(L"Updates", L"User-triggered release checks, verified staging and rollback-safe health state. WebCom never installs silently.");
+        draw_header(L"Updates", L"Background checks and optional verified downloads, with explicit user-controlled installation and rollback-safe health state.");
         const std::wstring channel = Wide(ReleaseChannelName(update_settings_.channel));
         const std::wstring phase = Wide(UpdateTransactionPhaseName(update_transaction_.phase));
         const bool endpoint_ready = ManifestUrlForChannel(update_runtime_config_, update_settings_.channel).has_value();
         const bool publisher_ready = IsTrustedPublisherFingerprint(update_runtime_config_.publisher_sha256);
-        const std::array<std::pair<std::wstring,std::wstring>,8> facts{{
+        const auto install_scope = DetectCurrentUpdateInstallScope();
+        const auto install_policy = InstallerLaunchPolicyForScope(install_scope);
+        const std::wstring install_scope_status = install_scope==UpdateInstallScope::PerUser ? L"Per-user • no elevation required" :
+            install_scope==UpdateInstallScope::PerMachine ? L"Per-machine • administrator approval required" :
+            L"Unknown/portable • automatic installer launch blocked";
+        const std::array<std::pair<std::wstring,std::wstring>,9> facts{{
             {L"Release channel", channel==L"beta"?L"Beta • preview releases":L"Stable • recommended public releases"},
-            {L"Update checks", update_settings_.checks_enabled?L"Enabled by your consent":L"Disabled • no release endpoint is contacted"},
+            {L"Update checks", update_settings_.checks_enabled?L"Enabled • background check cadence active":L"Disabled • no release endpoint is contacted"},
             {L"Trusted endpoint", endpoint_ready && publisher_ready ? L"Configured • HTTPS manifest + pinned publisher" : L"Not configured in this build"},
-            {L"Automatic downloads", L"Disabled • package download requires an explicit Stage action"},
+            {L"Automatic downloads", update_settings_.automatic_downloads?L"Enabled • only fully verified installers are retained":L"Disabled • package download requires an explicit Stage action"},
             {L"Automatic installation", L"Disabled • verified installer launch requires confirmation"},
+            {L"Install scope", install_scope_status},
             {L"Recovery installer", recovery_package_ ? L"Preserved • "+Wide(recovery_package_->version) : L"Not available • created after a successful update health check"},
             {L"Retry / backoff", UpdateRetryRemainingNow()?L"Retry in "+std::to_wstring(UpdateRetryRemainingNow())+L" seconds":update_retry_.consecutive_failures?L"Ready • previous failures: "+std::to_wstring(update_retry_.consecutive_failures):L"No backoff active"},
             {L"Transaction state", phase}
@@ -1131,6 +1137,12 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
             if(can_check)add_action(check_button,CheckForUpdates,L"Check for updates");
         }
         y+=D(56);
+        const RECT auto_downloads{left,y,std::min(right,left+D(330)),y+D(40)};
+        Rounded(dc,auto_downloads,hot_native_command_==ToggleAutomaticUpdateDownloads?kHover:kSurface,kBorder,D(12));
+        Text(dc,update_settings_.automatic_downloads?L"Disable automatic verified downloads":L"Enable automatic verified downloads",auto_downloads,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+        add_action(auto_downloads,ToggleAutomaticUpdateDownloads,L"Automatic verified update downloads");
+        Text(dc,L"Installer launch always remains manual.",{std::min(right,static_cast<int>(auto_downloads.right)+D(14)),y,right,y+D(40)},small_font_,kMuted,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+        y+=D(56);
         if(!update_runtime_status_.empty()){
             const RECT status{left,y,right,y+D(72)};Rounded(dc,status,MixChromeColor(kSurface,kAccent,4),kBorder,D(14));
             Text(dc,L"Update status",{status.left+D(18),status.top+D(7),status.right-D(18),status.top+D(32)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
@@ -1140,7 +1152,7 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
         if(available_update_ && update_transaction_.phase==UpdateTransactionPhase::None){
             const RECT available{left,y,right,y+D(92)};Rounded(dc,available,kSurface,kBorder,D(14));
             Text(dc,L"Available: WebCom "+Wide(available_update_->version),{available.left+D(18),available.top+D(8),available.right-D(18),available.top+D(35)},font_,kInk,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-            Text(dc,L"Download is still optional. Stage downloads the installer and verifies exact size, SHA-256, Authenticode trust and the pinned publisher before keeping it.",{available.left+D(18),available.top+D(36),available.right-D(210),available.bottom-D(8)},small_font_,kMuted,DT_LEFT|DT_TOP|DT_WORDBREAK|DT_NOPREFIX);
+            Text(dc,update_settings_.automatic_downloads?L"Automatic verified download is enabled. WebCom may stage this installer after a background check, but installation still requires your action.":L"Download is optional. Stage downloads the installer and verifies exact size, SHA-256, Authenticode trust and the pinned publisher before keeping it.",{available.left+D(18),available.top+D(36),available.right-D(210),available.bottom-D(8)},small_font_,kMuted,DT_LEFT|DT_TOP|DT_WORDBREAK|DT_NOPREFIX);
             const RECT stage{std::max(left,static_cast<int>(available.right)-D(190)),available.top+D(26),available.right-D(18),available.top+D(66)};
             const bool can_stage=!update_staging_&&!update_checking_;
             Rounded(dc,stage,hot_native_command_==StageAvailableUpdate&&can_stage?kHover:kSurface,kBorder,D(12));
@@ -1158,9 +1170,11 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
             Text(dc,detail,{state_panel.left+D(18),state_panel.top+D(36),state_panel.right-D(18),state_panel.bottom-D(46)},small_font_,UpdateRollbackRecommended(update_transaction_)?kAccent:kMuted,DT_LEFT|DT_TOP|DT_WORDBREAK|DT_NOPREFIX);
             const int button_top=static_cast<int>(state_panel.bottom)-D(40);
             if(update_transaction_.phase==UpdateTransactionPhase::VerifiedPackage){
-                const RECT install{state_panel.left+D(18),button_top,state_panel.left+D(210),state_panel.bottom-D(8)};
-                Rounded(dc,install,hot_native_command_==InstallStagedUpdate?kHover:kSurface,kBorder,D(12));
-                Text(dc,L"Install verified update...",install,font_,kAccent,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);add_action(install,InstallStagedUpdate,L"Install verified update");
+                const RECT install{state_panel.left+D(18),button_top,state_panel.left+D(250),state_panel.bottom-D(8)};
+                const bool can_install=install_policy.has_value();
+                Rounded(dc,install,hot_native_command_==InstallStagedUpdate&&can_install?kHover:kSurface,kBorder,D(12));
+                Text(dc,can_install?L"Install verified update...":L"Install scope unavailable",install,font_,can_install?kAccent:kMuted,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+                if(can_install)add_action(install,InstallStagedUpdate,L"Install verified update");
              } else if(EvaluateRecoveryReadiness(update_transaction_,recovery_package_,kWebComVersion,update_runtime_config_.publisher_sha256).ready()) {
                 const RECT rollback{state_panel.left+D(18),button_top,state_panel.left+D(230),state_panel.bottom-D(8)};
                 Rounded(dc,rollback,hot_native_command_==RollbackPreviousVersion?kHover:kSurface,kBorder,D(12));
@@ -1420,7 +1434,7 @@ void BrowserApp::Impl::PaintInternalPage(HDC dc, const RECT& content, Tab& tab) 
             {L"Bookmarks bar", show_bookmarks_ ? L"Shown below the address bar" : L"Hidden", ToggleBookmarks, Glyph::Star},
             {L"Profile color", L"Change the color used to identify this profile", ProfileColorMenu, Glyph::User},
             {L"Privacy and site data", std::to_wstring(privacy_cookie_domains_.size()) + L" cookie domain" + (privacy_cookie_domains_.size()==1?L"":L"s") + L" • " + std::to_wstring(PrivacyPermissionOrigins().size()) + L" permission origin" + (PrivacyPermissionOrigins().size()==1?L"":L"s"), PrivacyManager, Glyph::Globe},
-            {L"Updates", (update_settings_.channel==ReleaseChannel::Beta ? L"Beta" : L"Stable") + std::wstring(L" • checks ") + (update_settings_.checks_enabled?L"enabled":L"disabled") + L" • installs explicit", UpdatesPage, Glyph::Reload},
+            {L"Updates", (update_settings_.channel==ReleaseChannel::Beta ? L"Beta" : L"Stable") + std::wstring(L" • checks ") + (update_settings_.checks_enabled?L"enabled":L"disabled") + (update_settings_.automatic_downloads?L" • verified downloads automatic":L" • downloads manual") + L" • installs explicit", UpdatesPage, Glyph::Reload},
             {L"Recovery & reliability", UpdateRollbackRecommended(update_transaction_)?L"Rollback recommended • verified recovery controls":(session_.lock()&&session_.lock()->PreviousRuntimeUnclean()?L"Previous unclean shutdown evidence • local recovery report":L"Crash evidence, recovery installer and local reliability report"), RecoveryPage, Glyph::Shield},
             {L"Support diagnostics", L"Runtime, profile, workspace and browser-state information without browsing URLs or secrets", DiagnosticsPage, Glyph::Shield},
             {L"Keyboard shortcuts", L"A searchable reference for navigation, workspaces, tabs, Reader Mode and capture", ShortcutsPage, Glyph::Search}
@@ -2382,9 +2396,10 @@ void BrowserApp::Impl::ShowQuickCommands() {
     add(RecoveryPage,L"Recovery & reliability",L"Crash evidence, rollback and recovery report");
     add(ExportRecoveryReport,L"Export recovery report ZIP",L"Explicit local report with bounded redacted runtime log");
     add(UpdatesPage,L"Updates",L"Release channel, consent and staged update status");
-    add(CheckForUpdates,L"Check for updates",L"User-triggered signed manifest check",update_settings_.checks_enabled&&!update_checking_&&!update_staging_&&UpdateRetryRemainingNow()==0&&ManifestUrlForChannel(update_runtime_config_,update_settings_.channel).has_value()&&IsTrustedPublisherFingerprint(update_runtime_config_.publisher_sha256));
+    add(CheckForUpdates,L"Check for updates",L"Run the signed manifest check now",update_settings_.checks_enabled&&!update_checking_&&!update_staging_&&UpdateRetryRemainingNow()==0&&ManifestUrlForChannel(update_runtime_config_,update_settings_.channel).has_value()&&IsTrustedPublisherFingerprint(update_runtime_config_.publisher_sha256));
+    add(ToggleAutomaticUpdateDownloads,L"Automatic verified update downloads",update_settings_.automatic_downloads?L"Enabled • installer launch stays manual":L"Disabled • downloads require Stage",true);
     add(StageAvailableUpdate,L"Stage available update",L"Download and verify installer",available_update_.has_value()&&update_transaction_.phase==UpdateTransactionPhase::None&&!update_staging_);
-    add(InstallStagedUpdate,L"Install staged update",L"Re-verify and launch signed installer",update_transaction_.phase==UpdateTransactionPhase::VerifiedPackage);
+    add(InstallStagedUpdate,L"Install staged update",L"Re-verify and launch signed installer",update_transaction_.phase==UpdateTransactionPhase::VerifiedPackage&&InstallerLaunchPolicyForScope(DetectCurrentUpdateInstallScope()).has_value());
     add(RollbackPreviousVersion,L"Rollback to previous WebCom",L"Re-verify preserved known-good installer",EvaluateRecoveryReadiness(update_transaction_,recovery_package_,kWebComVersion,update_runtime_config_.publisher_sha256).ready());
     add(ExportDiagnosticsBundle,L"Export support diagnostics ZIP",L"Privacy-safe troubleshooting bundle");
     add(UpdateChannelMenu,L"Release channel",Wide(ReleaseChannelName(update_settings_.channel)).c_str());

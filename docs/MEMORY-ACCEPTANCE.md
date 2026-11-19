@@ -6,7 +6,7 @@ The repository includes `scripts/Measure-WebComMemory.ps1`. It measures `WebCom.
 
 ## Required scenarios
 
-Record at least these five scenarios for a public-beta candidate:
+Record at least these five scenarios for a public-release candidate:
 
 1. **one-tab** — one normal profile, one settled web tab, no DevTools.
 2. **multi-tab** — one profile with the agreed repeated test set of active/background tabs.

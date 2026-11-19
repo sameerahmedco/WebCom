@@ -70,19 +70,19 @@ Keep `WebView2Loader.dll` beside `WebCom.exe`.
 
 Every build writes `build-last.log` beside `build.cmd`. If MSVC fails, send that file; it contains the exact compiler or linker error.
 
-For v3, Windows acceptance must additionally exercise the custom tab accessibility provider with Narrator/UI Automation inspection, Stable/Beta signed release policy, centralized rollback readiness, and multi-sample memory budgets. Re-run the complete unpacked-extension migration, change-detection, reload, forget, and per-profile isolation matrix as a regression set. See `docs/VALIDATION.md` and `docs/PUBLIC-BETA-CHECKLIST.md`.
+For v3, Windows acceptance must additionally exercise the custom tab accessibility provider with Narrator/UI Automation inspection, Stable/Beta signed release policy, centralized rollback readiness, and multi-sample memory budgets. Re-run the complete unpacked-extension migration, change-detection, reload, forget, and per-profile isolation matrix as a regression set. See `docs/VALIDATION.md` and `docs/PUBLIC-RELEASE-CHECKLIST.md`.
 
 
 ## Signed installer packaging (Windows only)
 
-After `build.cmd` produces `dist\WebCom`, install Inno Setup 6 and use a code-signing certificate available to SignTool. Then run `scripts\Build-SignedInstaller.ps1` with the distribution folder, version, certificate SHA-1 selector, pinned publisher certificate SHA-256, and an HTTPS RFC3161 timestamp URL. The script compiles the installer, Authenticode-signs it, verifies the signature, and rejects a publisher fingerprint mismatch.
+After `build.cmd` produces `dist\WebCom`, install Inno Setup 7 (preferred; 6 is also supported) and use a code-signing certificate available to SignTool. Then run `scripts\Build-SignedInstaller.ps1` with the distribution folder, version, certificate SHA-1 selector, pinned publisher certificate SHA-256, and an HTTPS RFC3161 timestamp URL. The script compiles the installer, Authenticode-signs it, verifies the signature, and rejects a publisher fingerprint mismatch.
 
 Use `scripts\Test-FreshInstall.ps1` on the signed installer to perform a silent isolated install/file-layout check/uninstall pass. These Windows-only tools were not executed in the Linux validation environment.
 
 
 ## Release-configured update endpoints
 
-Ordinary `build.cmd` builds leave update endpoints and the publisher pin blank. A distributable update-enabled build must provide the trust roots explicitly, for example through `scripts\Build.ps1 -StableManifestUrl <https-url> -BetaManifestUrl <https-url> -PublisherSha256 <64-hex-cert-fingerprint>`. The browser will not accept an update manifest unless the package publisher in that manifest matches the compiled pin. `scripts\Build-PublicBeta.ps1` wraps the browser build, signing/installer build, signed manifest generation and final package verification.
+Ordinary `build.cmd` builds leave update endpoints and the publisher pin blank. A distributable update-enabled build must provide the trust roots explicitly, for example through `scripts\Build.ps1 -StableManifestUrl <https-url> -BetaManifestUrl <https-url> -PublisherSha256 <64-hex-cert-fingerprint>`. The browser will not accept an update manifest unless the package publisher in that manifest matches the compiled pin. `scripts\Build-ReleaseCandidate.ps1` wraps the browser build, signing/installer build, signed manifest generation and final package verification.
 
 ## Windows release acceptance
 
@@ -106,4 +106,11 @@ Every staged Windows package now runs `scripts\Verify-BuildPackage.ps1` before Z
 `Build-SignedInstaller.ps1` runs that gate before signing and again after signing `WebCom.exe`; the post-sign result is saved as `signed-dist-verification.json`. The Release Candidate gate compares that signed executable SHA-256 to the `WebCom.exe` actually installed by the signed installer. See `docs/BUILD-PACKAGE-INTEGRITY.md`.
 
 The `dist\WebCom-v3-Windows-*.zip` file is a development/test artifact. Public release approval applies to the signed installer, not that portable ZIP.
+
+
+## Locked dependency verification for signed releases
+
+Latest-45 tracks the WebView2 SDK in `dependencies.lock.json`. Normal developer builds retain the validated fallback/offline SDK path, but `Build-ReleaseCandidate.ps1` requires official NuGet catalog SHA-512 verification and refuses an arbitrary `-SdkDir` for signed/public artifacts. The release output also includes `release-provenance.json` and `webcom.spdx.json`. See `docs/SUPPLY-CHAIN.md`.
+PUBLIC RELEASE OPERATIONS (LATEST-47):
+Use scripts\Invoke-PublicRelease.ps1 from elevated Windows PowerShell to run build -> mandatory RC -> approval -> evidence in one fail-closed flow. It does not upload anything. After manually publishing the approved installer/Stable manifest, run scripts\Test-PublishedRelease.ps1 and archive its checksummed health report. See docs\POST-RELEASE.md.
 

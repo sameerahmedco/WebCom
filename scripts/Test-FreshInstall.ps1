@@ -85,7 +85,7 @@ try {
 
     $process = Start-Process -FilePath $installerPath -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',$mode,"/DIR=$installDir") -Wait -PassThru
     if ($process.ExitCode -ne 0) { Fail "installer exited with code $($process.ExitCode)" }
-    foreach ($name in 'WebCom.exe','WebView2Loader.dll','unins000.exe') {
+    foreach ($name in 'WebCom.exe','WebView2Loader.dll','PRIVACY.md','SECURITY.md','THIRD-PARTY-NOTICES.md','unins000.exe') {
         if (-not (Test-Path -LiteralPath (Join-Path $installDir $name) -PathType Leaf)) { Fail "installed file missing: $name" }
     }
 
@@ -94,6 +94,12 @@ try {
     if ($exeSig.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or -not $exeSig.SignerCertificate) { Fail "installed WebCom.exe signature status is $($exeSig.Status)" }
     $exePublisher = CertSha256 $exeSig.SignerCertificate
     if ($ExpectedPublisherSha256 -and $exePublisher -ne $ExpectedPublisherSha256.ToLowerInvariant()) { Fail 'installed WebCom.exe publisher fingerprint mismatch' }
+    $uninstaller = Join-Path $installDir 'unins000.exe'
+    $uninstallerSig = Get-AuthenticodeSignature -LiteralPath $uninstaller
+    if ($uninstallerSig.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or -not $uninstallerSig.SignerCertificate) { Fail "installed uninstaller signature status is $($uninstallerSig.Status)" }
+    $uninstallerPublisher = CertSha256 $uninstallerSig.SignerCertificate
+    if ($ExpectedPublisherSha256 -and $uninstallerPublisher -ne $ExpectedPublisherSha256.ToLowerInvariant()) { Fail 'installed uninstaller publisher fingerprint mismatch' }
+
     $versionInfo = (Get-Item -LiteralPath $installedExe).VersionInfo
     if (-not (Test-Version $versionInfo.ProductVersion $ExpectedVersion)) { Fail "installed ProductVersion is '$($versionInfo.ProductVersion)', expected $ExpectedVersion" }
     if (-not (Test-Version $versionInfo.FileVersion $ExpectedVersion)) { Fail "installed FileVersion is '$($versionInfo.FileVersion)', expected $ExpectedVersion" }
@@ -180,6 +186,7 @@ try {
             installedFileVersion = $versionInfo.FileVersion
             installedExecutableSha256 = $installedExecutableHash
             publisherSha256 = $exePublisher
+            uninstallerPublisherSha256 = $uninstallerPublisher
             machineInstall = [bool]$MachineInstall
             runtimeSmoke = $runtime
             uninstalled = $uninstalled

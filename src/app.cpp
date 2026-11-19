@@ -29,6 +29,7 @@
 #include "update_model.h"
 #include "update_runtime_model.h"
 #include "update_retry_model.h"
+#include "update_automation_model.h"
 #include "reliability_report_model.h"
 #include "update_recovery_model.h"
 #include "runtime_log.h"
@@ -63,6 +64,7 @@
 #include <uxtheme.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -96,6 +98,7 @@ constexpr UINT kUiFrame = 4;
 constexpr UINT kAnimationFrame = 5;
 constexpr UINT kDownloadTick = 6;
 constexpr UINT kUpdateHealth = 7;
+constexpr UINT kAutomaticUpdateCheck = 8;
 constexpr UINT kNotice = WM_APP + 1;
 constexpr UINT kCloseTab = WM_APP + 2;
 constexpr UINT kRunAction = WM_APP + 3;
@@ -108,6 +111,7 @@ constexpr COLORREF kCaption = RGB(31, 32, 32);
 constexpr COLORREF kFrame = RGB(60, 60, 60);
 constexpr COLORREF kAccent = RGB(171, 199, 248);
 constexpr std::size_t kMaxTabs = 200;
+std::atomic_bool g_update_network_busy{false};
 enum Command : UINT {
     Back = 100, Forward, Reload, Home, NewTab, Address, Profile, Saver, More,
     HomeSearch, HomeGo, Google, YouTube, GitHub, TabStrip, ToastClick, OpenToastDownload,
@@ -117,7 +121,7 @@ enum Command : UINT {
     MemoryReport, Downloads, TogglePasswords, ToggleAutofill, ClearSavedPasswords, ClearAutofillData, OpenInDefault, About,
     FocusAddress, NextTab, PreviousTab, FullScreen, Exit, ClearData,
     EngineCrashed = 400, TabCrashed, InstallRuntime,
-    BookmarkMenu, PasswordMenu, SettingsMenu, ShortcutsPage, DiagnosticsPage, FeedbackPage, CopyProblemTemplate, RecoveryPage, UpdatesPage, ExtensionsPage, ExtensionsRefresh, ExtensionsLoadUnpacked, ExtensionsFilterAll, ExtensionsFilterEnabled, ExtensionsFilterDisabled, ExtensionsFilterAttention, WelcomePage, OpenDefaultApps, WelcomeStartBrowsing, CopyDiagnostics, ExportDiagnosticsBundle, ExportRecoveryReport, OpenDataFolder, UpdateChannelMenu, UpdateChannelStable, UpdateChannelBeta, ToggleUpdateChecks, CheckForUpdates, StageAvailableUpdate, InstallStagedUpdate, RollbackPreviousVersion, ClearUpdateTransaction, ZoomIn, ZoomOut, ZoomReset, PrintPage, OpenFile,
+    BookmarkMenu, PasswordMenu, SettingsMenu, ShortcutsPage, DiagnosticsPage, FeedbackPage, CopyProblemTemplate, RecoveryPage, UpdatesPage, ExtensionsPage, ExtensionsRefresh, ExtensionsLoadUnpacked, ExtensionsFilterAll, ExtensionsFilterEnabled, ExtensionsFilterDisabled, ExtensionsFilterAttention, WelcomePage, OpenDefaultApps, WelcomeStartBrowsing, CopyDiagnostics, ExportDiagnosticsBundle, ExportRecoveryReport, OpenDataFolder, UpdateChannelMenu, UpdateChannelStable, UpdateChannelBeta, ToggleUpdateChecks, ToggleAutomaticUpdateDownloads, CheckForUpdates, StageAvailableUpdate, InstallStagedUpdate, RollbackPreviousVersion, ClearUpdateTransaction, ZoomIn, ZoomOut, ZoomReset, PrintPage, OpenFile,
     SearchInPage, DeveloperTools, HelpMenu, RemoveBookmark, PrivateHelp, History, ClearHistory, ClearRecentlyClosed, HistoryDeleteMatches, HistoryDeleteWeek, HistoryDeleteOlderMonth,
     ClearDownloadsList, RetryFailedDownloads, OpenDownloadsFolder, MuteTab, MoveTabLeft, MoveTabRight, NewProfileWindow,
     AppearanceMenu, ThemeMenu, ProfileColorMenu, ToggleBookmarks, ToggleReducedMotion, ToggleHighContrast, ColorAutomatic, ColorCustom, AppearanceReset, BookmarkManager,
@@ -161,10 +165,12 @@ struct CoString {
 
 struct UpdateCheckCompletion {
     UpdateCheckEvaluation evaluation;
+    bool background = false;
 };
 
 struct UpdateStageCompletion {
     bool success = false;
+    bool background = false;
     UpdateManifest manifest;
     std::filesystem::path package;
     std::string message;
@@ -816,6 +822,7 @@ public:
         update_settings_ = LoadUpdateSettings(root_);
         update_transaction_ = LoadUpdateTransaction(root_);
         update_retry_ = LoadUpdateRetryState(root_);
+        update_automation_ = LoadUpdateAutomationState(root_);
         recovery_package_ = LoadRecoveryPackage(root_);
         update_runtime_config_ = ReleaseRuntimeConfig{
             release_config::kStableManifestUrl, release_config::kBetaManifestUrl, release_config::kPublisherSha256};
@@ -992,6 +999,7 @@ private:
     UpdateSettings update_settings_{};
     UpdateTransaction update_transaction_{};
     UpdateRetryState update_retry_{};
+    UpdateAutomationState update_automation_{};
     std::optional<RecoveryPackage> recovery_package_;
     ComPtr<ICoreWebView2Profile> extension_profile_;
     bool ad_blocker_starting_ = false;
@@ -1259,8 +1267,9 @@ private:
     void OpenDataFolderNow();
     void UpdateChannelMenuPopup();
     void SetUpdateChannel(ReleaseChannel channel);
-    void StartUpdateCheck();
-    void StageAvailableUpdateNow();
+    void ScheduleAutomaticUpdateCheck(bool startup_delay);
+    void StartUpdateCheck(bool background = false);
+    void StageAvailableUpdateNow(bool background = false);
     void InstallStagedUpdateNow();
     void RollbackPreviousVersionNow();
     void HandleUpdateCheckCompletion(UpdateCheckCompletion* completion);
@@ -1898,6 +1907,7 @@ std::wstring BrowserApp::Impl::NativeActionAccessibleName(const NativeAction& ac
     case ExtensionsFilterAttention: return L"Show extensions needing attention";
     case CheckForUpdates: return L"Check for updates";
     case ToggleUpdateChecks: return L"Toggle automatic update checks";
+    case ToggleAutomaticUpdateDownloads: return L"Toggle automatic verified update downloads";
     case UpdateChannelMenu: return L"Choose release channel";
     case StageAvailableUpdate: return L"Download verified update";
     case InstallStagedUpdate: return L"Install verified update";
@@ -2039,6 +2049,7 @@ bool BrowserApp::Impl::Create(int show_command, const std::wstring& initial_addr
         if (IsHome(tab->url)) FocusOmnibox();
     }
     UpdateUI(true);
+    ScheduleAutomaticUpdateCheck(true);
     return true;
 }
 
@@ -4898,7 +4909,7 @@ void BrowserApp::Impl::ExportDiagnosticsBundleNow() {
     if(include_log==IDCANCEL)return;
     std::vector<DiagnosticsBundleEntry> entries{
         {"diagnostics.txt",Utf8(DiagnosticsTextNow())},
-        {"updates.txt",std::string("Release channel: ")+ReleaseChannelName(update_settings_.channel)+"\r\nUpdate checks consent: "+(update_settings_.checks_enabled?"enabled":"disabled")+"\r\nManifest endpoint configured: "+(ManifestUrlForChannel(update_runtime_config_,update_settings_.channel)?"yes":"no")+"\r\nPinned publisher configured: "+(IsTrustedPublisherFingerprint(update_runtime_config_.publisher_sha256)?"yes":"no")+"\r\nTransaction phase: "+UpdateTransactionPhaseName(update_transaction_.phase)+"\r\nRecovery installer: "+(recovery_package_?("preserved "+recovery_package_->version):"not available")+"\r\nUpdate retry failures: "+std::to_string(update_retry_.consecutive_failures)+"\r\nUpdate retry remaining seconds: "+std::to_string(UpdateRetryRemainingNow())+"\r\nPrevious session unclean: "+((session_.lock()&&session_.lock()->PreviousRuntimeUnclean())?"yes":"no")+"\r\nAutomatic download: disabled\r\nAutomatic install: disabled\r\nAutomatic rollback: disabled\r\nSigned manifest schema: v2 Authenticode + pinned publisher SHA-256\r\n"},
+        {"updates.txt",std::string("Release channel: ")+ReleaseChannelName(update_settings_.channel)+"\r\nUpdate checks consent: "+(update_settings_.checks_enabled?"enabled":"disabled")+"\r\nManifest endpoint configured: "+(ManifestUrlForChannel(update_runtime_config_,update_settings_.channel)?"yes":"no")+"\r\nPinned publisher configured: "+(IsTrustedPublisherFingerprint(update_runtime_config_.publisher_sha256)?"yes":"no")+"\r\nTransaction phase: "+UpdateTransactionPhaseName(update_transaction_.phase)+"\r\nInstall scope: "+std::string(UpdateInstallScopeName(DetectCurrentUpdateInstallScope()))+"\r\nRecovery installer: "+(recovery_package_?("preserved "+recovery_package_->version):"not available")+"\r\nUpdate retry failures: "+std::to_string(update_retry_.consecutive_failures)+"\r\nUpdate retry remaining seconds: "+std::to_string(UpdateRetryRemainingNow())+"\r\nPrevious session unclean: "+((session_.lock()&&session_.lock()->PreviousRuntimeUnclean())?"yes":"no")+"\r\nAutomatic background checks: "+(update_settings_.checks_enabled?"enabled":"disabled")+"\r\nAutomatic verified download: "+(update_settings_.automatic_downloads?"enabled":"disabled")+"\r\nAutomatic install: disabled\r\nUser-triggered installer launch: scope-preserving when installed copy is registered\r\nAutomatic rollback: disabled\r\nSigned manifest schema: v2 Authenticode + pinned publisher SHA-256\r\n"},
         {"privacy.txt","This support bundle intentionally excludes browsing URLs, cookie values, saved password values, form contents and authentication data.\r\nThe optional runtime log redacts web/file URLs but can contain operational error/status text; review the files before sharing them.\r\n"}
     };
     if(include_log==IDYES){const auto runtime=ReadRuntimeLogBundleText(root_);if(!runtime.empty())entries.push_back({"runtime.txt",runtime});}
@@ -4924,40 +4935,89 @@ void BrowserApp::Impl::SetUpdateChannel(ReleaseChannel channel) {
     UpdateSettings next=update_settings_;next.channel=channel;std::string error;
     if(!SaveUpdateSettings(root_,next,&error)){Notice(L"Update channel could not be saved. "+Wide(error));return;}
     update_settings_=next;available_update_.reset();update_runtime_status_.clear();
-    ResetUpdateRetry(update_retry_);SaveUpdateRetryState(root_,update_retry_,nullptr);QueueUI();
+    ResetUpdateRetry(update_retry_);SaveUpdateRetryState(root_,update_retry_,nullptr);
+    update_automation_={};SaveUpdateAutomationState(root_,update_automation_,nullptr);QueueUI();
+    ScheduleAutomaticUpdateCheck(false);
     Note(channel==ReleaseChannel::Beta?L"Update channel set to Beta.":L"Update channel set to Stable.");
 }
 
-void BrowserApp::Impl::StartUpdateCheck() {
+void BrowserApp::Impl::ScheduleAutomaticUpdateCheck(bool startup_delay) {
+    if(!window_ || closing_) return;
+    KillTimer(window_, kAutomaticUpdateCheck);
+    if(!update_settings_.checks_enabled) return;
+    if(update_transaction_.phase!=UpdateTransactionPhase::None) return;
+    const auto now=UnixNowSeconds();
+    const auto retry_remaining=BackgroundUpdateQuickRetryAllowed(update_retry_.consecutive_failures)?UpdateRetryRemainingNow():0;
+    const auto delay=BackgroundUpdateCheckDelaySeconds(update_automation_,now,retry_remaining,startup_delay);
+    const auto milliseconds=static_cast<UINT>(std::min<std::uint64_t>(delay*1000ull,21600000ull));
+    SetTimer(window_,kAutomaticUpdateCheck,std::max<UINT>(milliseconds,1000u),nullptr);
+}
+
+void BrowserApp::Impl::StartUpdateCheck(bool background) {
     if (update_checking_ || update_staging_) return;
+    if (background && update_transaction_.phase != UpdateTransactionPhase::None) return;
+    if(background) {
+        update_automation_=LoadUpdateAutomationState(root_);
+        update_retry_=LoadUpdateRetryState(root_);
+        const auto now=UnixNowSeconds();
+        const auto retry_remaining=UpdateRetryRemainingSeconds(update_retry_,now);
+        const bool quick_retry_ready=BackgroundUpdateQuickRetryAllowed(update_retry_.consecutive_failures) && retry_remaining==0;
+        if(!quick_retry_ready && !BackgroundUpdateCheckDue(update_automation_,now)) {
+            ScheduleAutomaticUpdateCheck(false);
+            return;
+        }
+    }
     const auto retry_remaining = UpdateRetryRemainingNow();
     if (retry_remaining) {
         update_runtime_status_ = L"Update checks are temporarily rate-limited after repeated failures. Try again in " + std::to_wstring(retry_remaining) + L" second" + (retry_remaining==1?L".":L"s.");
         AppendRuntimeLog(root_,RuntimeLogLevel::Warning,"update.check.backoff","remaining_seconds="+std::to_string(retry_remaining),nullptr);
-        QueueUI(); Notice(update_runtime_status_); return;
+        QueueUI();
+        if(background) ScheduleAutomaticUpdateCheck(false); else Notice(update_runtime_status_);
+        return;
     }
     if (!update_settings_.checks_enabled) {
-        Notice(L"Enable update checks first. WebCom only contacts the configured release endpoint after your consent.");
+        if(!background) Notice(L"Enable update checks first. WebCom only contacts the configured release endpoint after your consent.");
         return;
     }
     const auto endpoint = ManifestUrlForChannel(update_runtime_config_, update_settings_.channel);
     if (!endpoint || !IsTrustedPublisherFingerprint(update_runtime_config_.publisher_sha256)) {
         update_runtime_status_ = L"This build has no trusted update endpoint/publisher configured.";
         QueueUI();
-        Notice(update_runtime_status_ + L" Release builds must set the manifest URL and pinned publisher SHA-256 at build time.");
+        if(!background) Notice(update_runtime_status_ + L" Release builds must set the manifest URL and pinned publisher SHA-256 at build time.");
         return;
     }
+    bool expected=false;
+    if(!g_update_network_busy.compare_exchange_strong(expected,true)) {
+        if(!background) Note(L"Another WebCom window is already checking or staging an update.");
+        else ScheduleAutomaticUpdateCheck(false);
+        return;
+    }
+    if(background) {
+        update_automation_=LoadUpdateAutomationState(root_);
+        update_retry_=LoadUpdateRetryState(root_);
+        const auto now=UnixNowSeconds();
+        const auto retry_remaining=UpdateRetryRemainingSeconds(update_retry_,now);
+        const bool quick_retry_ready=BackgroundUpdateQuickRetryAllowed(update_retry_.consecutive_failures) && retry_remaining==0;
+        if(!quick_retry_ready && !BackgroundUpdateCheckDue(update_automation_,now)) {
+            g_update_network_busy.store(false);
+            ScheduleAutomaticUpdateCheck(false);
+            return;
+        }
+        RecordBackgroundUpdateCheck(update_automation_,now);
+        SaveUpdateAutomationState(root_,update_automation_,nullptr);
+    }
     update_checking_ = true;
-    AppendRuntimeLog(root_,RuntimeLogLevel::Info,"update.check.start","channel="+ReleaseChannelName(update_settings_.channel),nullptr);
+    AppendRuntimeLog(root_,RuntimeLogLevel::Info,"update.check.start","channel="+ReleaseChannelName(update_settings_.channel)+(background?" origin=background":" origin=manual"),nullptr);
     available_update_.reset();
-    update_runtime_status_ = L"Checking the signed release manifest...";
+    update_runtime_status_ = background ? L"Checking for WebCom updates in the background..." : L"Checking the signed release manifest...";
     QueueUI();
     const HWND target = window_;
     const auto config = update_runtime_config_;
     const auto channel = update_settings_.channel;
     const std::string url = *endpoint;
-    std::thread([target, config, channel, url] {
+    std::thread([target, config, channel, url, background] {
         auto* completion = new UpdateCheckCompletion();
+        completion->background = background;
         std::string error;
         const auto text = FetchUpdateManifestHttps(url, 64u * 1024u, &error);
         if (!text) {
@@ -4966,6 +5026,7 @@ void BrowserApp::Impl::StartUpdateCheck() {
         } else {
             completion->evaluation = EvaluateUpdateManifest(kWebComVersion, channel, config, *text);
         }
+        g_update_network_busy.store(false);
         if (!PostMessageW(target, kUpdateCheckComplete, 0, reinterpret_cast<LPARAM>(completion))) delete completion;
     }).detach();
 }
@@ -4973,6 +5034,7 @@ void BrowserApp::Impl::StartUpdateCheck() {
 void BrowserApp::Impl::HandleUpdateCheckCompletion(UpdateCheckCompletion* raw) {
     std::unique_ptr<UpdateCheckCompletion> completion(raw);
     update_checking_ = false;
+    g_update_network_busy.store(false);
     if (!completion) return;
     update_runtime_status_ = Wide(completion->evaluation.message);
     const bool check_succeeded = completion->evaluation.status==UpdateCheckStatus::UpdateAvailable || completion->evaluation.status==UpdateCheckStatus::NoUpdate;
@@ -4986,42 +5048,56 @@ void BrowserApp::Impl::HandleUpdateCheckCompletion(UpdateCheckCompletion* raw) {
             SaveUpdateRetryState(root_,update_retry_,&retry_error);
     }
     AppendRuntimeLog(root_,completion->evaluation.status==UpdateCheckStatus::UpdateAvailable?RuntimeLogLevel::Info:RuntimeLogLevel::Warning,
-                     "update.check.complete","status="+std::to_string(static_cast<int>(completion->evaluation.status))+" retry_failures="+std::to_string(update_retry_.consecutive_failures),nullptr);
+                     "update.check.complete","status="+std::to_string(static_cast<int>(completion->evaluation.status))+" retry_failures="+std::to_string(update_retry_.consecutive_failures)+(completion->background?" origin=background":" origin=manual"),nullptr);
     if (completion->evaluation.status == UpdateCheckStatus::UpdateAvailable && completion->evaluation.manifest) {
         available_update_ = completion->evaluation.manifest;
         update_runtime_status_ = L"WebCom " + Wide(available_update_->version) + L" is available and its signed manifest passed the build trust policy.";
-        NoteAction(L"WebCom " + Wide(available_update_->version) + L" is available. Click to review.", UpdatesPage);
+        if(completion->background && update_settings_.automatic_downloads && update_transaction_.phase==UpdateTransactionPhase::None) {
+            StageAvailableUpdateNow(true);
+        } else {
+            NoteAction(L"WebCom " + Wide(available_update_->version) + L" is available. Click to review.", UpdatesPage);
+        }
     } else {
         available_update_.reset();
-        if (completion->evaluation.status == UpdateCheckStatus::NoUpdate) Note(L"WebCom is up to date on this release channel.");
-        else Notice(L"Update check did not produce an installable release. " + update_runtime_status_);
+        if (!completion->background) {
+            if (completion->evaluation.status == UpdateCheckStatus::NoUpdate) Note(L"WebCom is up to date on this release channel.");
+            else Notice(L"Update check did not produce an installable release. " + update_runtime_status_);
+        }
     }
+    ScheduleAutomaticUpdateCheck(false);
     QueueUI();
 }
 
-void BrowserApp::Impl::StageAvailableUpdateNow() {
+void BrowserApp::Impl::StageAvailableUpdateNow(bool background) {
     if (update_checking_ || update_staging_) return;
-    if (!available_update_) { Notice(L"Check for updates first."); return; }
+    if (!available_update_) { if(!background) Notice(L"Check for updates first."); return; }
     if (update_transaction_.phase != UpdateTransactionPhase::None) {
-        Notice(L"A staged update transaction already exists. Clear or finish it before staging another release.");
+        if(!background) Notice(L"A staged update transaction already exists. Clear or finish it before staging another release.");
         return;
     }
     const auto package = StagedUpdatePackagePath(root_, available_update_->version);
-    if (package.empty()) { Notice(L"The update staging path could not be created safely."); return; }
+    if (package.empty()) { if(!background) Notice(L"The update staging path could not be created safely."); return; }
+    bool expected=false;
+    if(!g_update_network_busy.compare_exchange_strong(expected,true)) {
+        if(!background) Note(L"Another WebCom window is already checking or staging an update.");
+        return;
+    }
     update_staging_ = true;
-    AppendRuntimeLog(root_,RuntimeLogLevel::Info,"update.stage.start","version="+available_update_->version,nullptr);
+    AppendRuntimeLog(root_,RuntimeLogLevel::Info,"update.stage.start","version="+available_update_->version+(background?" origin=background":" origin=manual"),nullptr);
     update_runtime_status_ = L"Downloading and verifying WebCom " + Wide(available_update_->version) + L"...";
     QueueUI();
     const HWND target = window_;
     const auto manifest = *available_update_;
     const std::string publisher = update_runtime_config_.publisher_sha256;
-    std::thread([target, manifest, publisher, package] {
+    std::thread([target, manifest, publisher, package, background] {
         auto* completion = new UpdateStageCompletion();
+        completion->background = background;
         completion->manifest = manifest;
         completion->package = package;
         std::string error;
         completion->success = DownloadAndVerifyUpdatePackage(manifest, publisher, package, &error);
         completion->message = completion->success ? "The installer passed size, SHA-256, Authenticode and publisher verification." : error;
+        g_update_network_busy.store(false);
         if (!PostMessageW(target, kUpdateStageComplete, 0, reinterpret_cast<LPARAM>(completion))) delete completion;
     }).detach();
 }
@@ -5029,11 +5105,12 @@ void BrowserApp::Impl::StageAvailableUpdateNow() {
 void BrowserApp::Impl::HandleUpdateStageCompletion(UpdateStageCompletion* raw) {
     std::unique_ptr<UpdateStageCompletion> completion(raw);
     update_staging_ = false;
+    g_update_network_busy.store(false);
     if (!completion) return;
     if (!completion->success) {
         update_runtime_status_ = Wide(completion->message.empty() ? "Update staging failed." : completion->message);
         AppendRuntimeLog(root_,RuntimeLogLevel::Error,"update.stage.failed",completion->message,nullptr);
-        Notice(L"The update was not staged. " + update_runtime_status_);
+        if(!completion->background) Notice(L"The update was not staged. " + update_runtime_status_);
         QueueUI();
         return;
     }
@@ -5042,14 +5119,18 @@ void BrowserApp::Impl::HandleUpdateStageCompletion(UpdateStageCompletion* raw) {
     if (!StageVerifiedUpdate(next, completion->manifest, kWebComVersion, &error) ||
         !SaveUpdateTransaction(root_, next, &error)) {
         update_runtime_status_ = L"The verified installer was downloaded but its transaction state could not be committed.";
-        Notice(update_runtime_status_ + L" " + Wide(error));
+        if(!completion->background) Notice(update_runtime_status_ + L" " + Wide(error));
+        AppendRuntimeLog(root_,RuntimeLogLevel::Error,"update.stage.commit_failed",error,nullptr);
         QueueUI();
         return;
     }
     update_transaction_ = next;
-    AppendRuntimeLog(root_,RuntimeLogLevel::Info,"update.stage.verified","version="+next.target_version,nullptr);
+    AppendRuntimeLog(root_,RuntimeLogLevel::Info,"update.stage.verified","version="+next.target_version+(completion->background?" origin=background":" origin=manual"),nullptr);
     update_runtime_status_ = L"WebCom " + Wide(next.target_version) + L" is staged and verified. Installation still requires your explicit action.";
-    Note(L"Signed WebCom update staged and verified.");
+    if(completion->background)
+        NoteAction(L"WebCom " + Wide(next.target_version) + L" was downloaded and verified. Click to install when ready.", UpdatesPage);
+    else
+        Note(L"Signed WebCom update staged and verified.");
     QueueUI();
 }
 
@@ -5068,17 +5149,27 @@ void BrowserApp::Impl::InstallStagedUpdateNow() {
     if (!VerifyStagedUpdatePackage(package, verification, update_runtime_config_.publisher_sha256, &error)) {
         Notice(L"The staged installer failed re-verification and will not run. " + Wide(error)); return;
     }
+    const auto install_scope = DetectCurrentUpdateInstallScope();
+    const auto launch_policy = InstallerLaunchPolicyForScope(install_scope);
+    if (!launch_policy) {
+        AppendRuntimeLog(root_,RuntimeLogLevel::Warning,"update.install.scope_unknown","automatic installer launch blocked",nullptr);
+        Notice(L"WebCom could not prove whether this copy is installed per-user or per-machine. The verified package remains staged, but WebCom will not launch it automatically. Reinstall this build with the official installer first, then retry the update.");
+        return;
+    }
+    const std::wstring scope_text = install_scope==UpdateInstallScope::PerMachine ? L"per-machine" : L"per-user";
     const std::wstring question = L"Install WebCom " + Wide(update_transaction_.target_version) +
-        L" now?\n\nThe installer has just been re-verified. WebCom windows will close after Windows accepts the installer launch. This action may show a UAC prompt.";
+        L" now?\n\nThe installer has just been re-verified and will preserve this installation's " + scope_text +
+        L" scope. WebCom windows will close after Windows accepts the installer launch." +
+        (launch_policy->elevate ? L" Windows will request administrator approval." : L"");
     if (MessageBoxW(window_, question.c_str(), L"Install verified WebCom update", MB_YESNO | MB_DEFBUTTON2 | MB_ICONQUESTION) != IDYES) return;
     UpdateTransaction scheduled = update_transaction_;
     if (!MarkUpdateInstallScheduled(scheduled, &error) || !SaveUpdateTransaction(root_, scheduled, &error)) {
         Notice(L"The update install state could not be saved. " + Wide(error)); return;
     }
     update_transaction_ = scheduled;
-    const std::wstring parameters = L"/CLOSEAPPLICATIONS /NORESTART";
+    const std::wstring parameters = Wide(launch_policy->install_mode_argument) + L" /CLOSEAPPLICATIONS /NORESTART";
     SHELLEXECUTEINFOW launch{}; launch.cbSize = sizeof(launch); launch.fMask = SEE_MASK_NOCLOSEPROCESS;
-    launch.hwnd = window_; launch.lpVerb = L"runas"; launch.lpFile = package.c_str(); launch.lpParameters = parameters.c_str();
+    launch.hwnd = window_; launch.lpVerb = launch_policy->elevate ? L"runas" : L"open"; launch.lpFile = package.c_str(); launch.lpParameters = parameters.c_str();
     launch.nShow = SW_SHOWNORMAL;
     if (!ShellExecuteExW(&launch)) {
         UpdateTransaction revert = update_transaction_;
@@ -5090,11 +5181,10 @@ void BrowserApp::Impl::InstallStagedUpdateNow() {
         return;
     }
     if (launch.hProcess) CloseHandle(launch.hProcess);
-    AppendRuntimeLog(root_,RuntimeLogLevel::Info,"update.install.launched","version="+update_transaction_.target_version,nullptr);
+    AppendRuntimeLog(root_,RuntimeLogLevel::Info,"update.install.launched","version="+update_transaction_.target_version+" scope="+std::string(UpdateInstallScopeName(install_scope)),nullptr);
     if (auto session = session_.lock()) session->CloseOtherProfileWindows(this);
     PostMessageW(window_, WM_CLOSE, 0, 0);
 }
-
 void BrowserApp::Impl::RollbackPreviousVersionNow() {
     recovery_package_ = LoadRecoveryPackage(root_);
     const auto readiness = EvaluateRecoveryReadiness(update_transaction_, recovery_package_,
@@ -5117,21 +5207,29 @@ void BrowserApp::Impl::RollbackPreviousVersionNow() {
         Notice(L"The preserved recovery installer failed re-verification and will not run. " + Wide(error));
         return;
     }
+    const auto install_scope=DetectCurrentUpdateInstallScope();
+    const auto launch_policy=InstallerLaunchPolicyForScope(install_scope);
+    if(!launch_policy){
+        AppendRuntimeLog(root_,RuntimeLogLevel::Warning,"update.rollback.scope_unknown","automatic rollback launch blocked",nullptr);
+        Notice(L"WebCom could not prove the current installation scope, so it will not launch the rollback installer automatically. The verified recovery package has not been modified.");return;
+    }
+    const std::wstring scope_text=install_scope==UpdateInstallScope::PerMachine?L"per-machine":L"per-user";
     const std::wstring question=L"Roll back to WebCom "+Wide(recovery_package_->version)+
-        L"?\n\nThe preserved previous installer has just been re-verified. Windows may show a UAC prompt. WebCom will close only after Windows accepts the installer launch.";
+        L"?\n\nThe preserved previous installer has just been re-verified and will preserve this installation's "+scope_text+
+        L" scope. WebCom will close only after Windows accepts the installer launch."+
+        (launch_policy->elevate?L" Windows will request administrator approval.":L"");
     if(MessageBoxW(window_,question.c_str(),L"Rollback WebCom",MB_YESNO|MB_DEFBUTTON2|MB_ICONWARNING)!=IDYES)return;
-    const std::wstring parameters=L"/CLOSEAPPLICATIONS /NORESTART";
-    SHELLEXECUTEINFOW launch{};launch.cbSize=sizeof(launch);launch.fMask=SEE_MASK_NOCLOSEPROCESS;launch.hwnd=window_;launch.lpVerb=L"runas";launch.lpFile=package.c_str();launch.lpParameters=parameters.c_str();launch.nShow=SW_SHOWNORMAL;
+    const std::wstring parameters=Wide(launch_policy->install_mode_argument)+L" /CLOSEAPPLICATIONS /NORESTART";
+    SHELLEXECUTEINFOW launch{};launch.cbSize=sizeof(launch);launch.fMask=SEE_MASK_NOCLOSEPROCESS;launch.hwnd=window_;launch.lpVerb=launch_policy->elevate?L"runas":L"open";launch.lpFile=package.c_str();launch.lpParameters=parameters.c_str();launch.nShow=SW_SHOWNORMAL;
     if(!ShellExecuteExW(&launch)){
         AppendRuntimeLog(root_,RuntimeLogLevel::Error,"update.rollback.launch_failed","Windows did not accept the recovery installer launch",nullptr);
         Notice(L"Windows did not launch the verified recovery installer. No rollback was performed.");return;
     }
     if(launch.hProcess)CloseHandle(launch.hProcess);
-    AppendRuntimeLog(root_,RuntimeLogLevel::Warning,"update.rollback.launched","version="+recovery_package_->version,nullptr);
+    AppendRuntimeLog(root_,RuntimeLogLevel::Warning,"update.rollback.launched","version="+recovery_package_->version+" scope="+std::string(UpdateInstallScopeName(install_scope)),nullptr);
     if(auto session=session_.lock())session->CloseOtherProfileWindows(this);
     PostMessageW(window_,WM_CLOSE,0,0);
 }
-
 void BrowserApp::Impl::PrepareUpdateHealthState() {
     auto session = session_.lock();
     if (!session || !session->ClaimUpdateHealthOwner()) return;
@@ -5144,6 +5242,17 @@ void BrowserApp::Impl::PrepareUpdateHealthState() {
             update_runtime_status_ = L"Updated WebCom is running. A short local health window is in progress.";
             AppendRuntimeLog(root_,RuntimeLogLevel::Info,"update.health.start","version="+update_transaction_.target_version,nullptr);
             SetTimer(window_, kUpdateHealth, 30000, nullptr);
+        }
+    } else if (update_transaction_.phase == UpdateTransactionPhase::InstallScheduled &&
+               update_transaction_.previous_version == kWebComVersion) {
+        UpdateTransaction recovered = update_transaction_;
+        if (RevertIncompleteScheduledInstall(recovered, kWebComVersion, &error) &&
+            SaveUpdateTransaction(root_, recovered, &error)) {
+            update_transaction_ = recovered;
+            update_runtime_status_ = L"The previous update installation did not complete. The signed installer remains staged and will be re-verified before another install attempt.";
+            AppendRuntimeLog(root_,RuntimeLogLevel::Warning,"update.install.incomplete","target="+update_transaction_.target_version,nullptr);
+        } else if (!error.empty()) {
+            AppendRuntimeLog(root_,RuntimeLogLevel::Error,"update.install.reconcile_failed",error,nullptr);
         }
     } else if (update_transaction_.phase == UpdateTransactionPhase::AwaitingHealthCheck &&
                update_transaction_.target_version == kWebComVersion) {
@@ -5167,6 +5276,7 @@ void BrowserApp::Impl::PrepareUpdateHealthState() {
             if(!staged_dir.empty()){std::error_code remove_error;std::filesystem::remove_all(staged_dir,remove_error);}
             update_runtime_status_ = L"WebCom detected that the previous version is running again; the pending update transaction was cleared.";
             AppendRuntimeLog(root_,RuntimeLogLevel::Warning,"update.rollback.completed","version="+std::string(kWebComVersion),nullptr);
+            ScheduleAutomaticUpdateCheck(false);
         }
     }
 }
@@ -5202,6 +5312,7 @@ void BrowserApp::Impl::ConfirmUpdateHealth() {
         update_runtime_status_ = L"WebCom " + Wide(kWebComVersion) + L" passed its local startup health window.";
         if (recovery_preserved) update_runtime_status_ += L" Its verified installer was preserved as the single rollback package for the next update.";
         AppendRuntimeLog(root_,RuntimeLogLevel::Info,"update.health.passed","version="+std::string(kWebComVersion),nullptr);
+        ScheduleAutomaticUpdateCheck(false);
         Note(L"Updated WebCom passed its startup health check.");
         QueueUI();
     }
@@ -5250,7 +5361,7 @@ void BrowserApp::Impl::UpdateChannelMenuPopup() {
         {UpdateChannelStable,L"Stable",L"Recommended public releases",L"\uE73E",true,update_settings_.channel==ReleaseChannel::Stable},
         {UpdateChannelBeta,L"Beta",L"Preview releases for testing",L"\uE73E",true,update_settings_.channel==ReleaseChannel::Beta},
         {0,L"",L"",L"",false,false,true},
-        {0,L"Automatic downloads are not enabled yet",L"Use Updates to opt in to release checks; install remains explicit",L"\uE946",false}
+        {0,update_settings_.automatic_downloads?L"Verified background downloads enabled":L"Verified background downloads disabled",L"Open Updates to change download behavior; installer launch remains explicit",L"\uE946",false}
     };
     RECT client{};GetClientRect(window_,&client);POINT anchor{client.right-D(24),fullscreen_?D(20):D(100)};ClientToScreen(window_,&anchor);
     menu_open_=true;struct Reset{bool& value;~Reset(){value=false;}}reset{menu_open_};
@@ -7024,16 +7135,38 @@ This does not clear cookies, site storage, permissions, bookmarks or downloaded 
     case UpdateChannelStable: SetUpdateChannel(ReleaseChannel::Stable); break;
     case UpdateChannelBeta: SetUpdateChannel(ReleaseChannel::Beta); break;
     case ToggleUpdateChecks: {
-        UpdateSettings next=update_settings_; next.checks_enabled=!next.checks_enabled; std::string error;
+        UpdateSettings next=update_settings_; next.checks_enabled=!next.checks_enabled;
+        if(!next.checks_enabled) next.automatic_downloads=false;
+        std::string error;
         if(!SaveUpdateSettings(root_,next,&error)){Notice(L"Update-check preference could not be saved. "+Wide(error));break;}
         update_settings_=next;
-        if(!update_settings_.checks_enabled){available_update_.reset();update_runtime_status_.clear();ResetUpdateRetry(update_retry_);SaveUpdateRetryState(root_,update_retry_,nullptr);}
+        if(!update_settings_.checks_enabled){
+            KillTimer(window_,kAutomaticUpdateCheck);
+            available_update_.reset();update_runtime_status_.clear();
+            ResetUpdateRetry(update_retry_);SaveUpdateRetryState(root_,update_retry_,nullptr);
+        } else ScheduleAutomaticUpdateCheck(false);
         QueueUI();
-        Note(update_settings_.checks_enabled?L"Update checks are enabled. WebCom still will not download or install automatically.":L"Update checks are disabled.");
+        Note(update_settings_.checks_enabled?L"Automatic update checks are enabled. Package downloads and installer launch remain separately controlled.":L"Automatic update checks and automatic downloads are disabled.");
         break;
     }
-    case CheckForUpdates: StartUpdateCheck(); break;
-    case StageAvailableUpdate: StageAvailableUpdateNow(); break;
+    case ToggleAutomaticUpdateDownloads: {
+        UpdateSettings next=update_settings_;
+        next.automatic_downloads=!next.automatic_downloads;
+        if(next.automatic_downloads) next.checks_enabled=true;
+        std::string error;
+        if(!SaveUpdateSettings(root_,next,&error)){Notice(L"Automatic-download preference could not be saved. "+Wide(error));break;}
+        update_settings_=next;
+        ScheduleAutomaticUpdateCheck(false);
+        const bool stage_known=update_settings_.automatic_downloads && available_update_ && update_transaction_.phase==UpdateTransactionPhase::None;
+        QueueUI();
+        if(stage_known) StageAvailableUpdateNow(true);
+        Note(update_settings_.automatic_downloads
+            ? L"Verified update downloads are enabled. WebCom may download a signed installer in the background, but it will never launch it without your action."
+            : L"Automatic update downloads are disabled. Background checks can still notify you about available releases.");
+        break;
+    }
+    case CheckForUpdates: StartUpdateCheck(false); break;
+    case StageAvailableUpdate: StageAvailableUpdateNow(false); break;
     case InstallStagedUpdate: InstallStagedUpdateNow(); break;
     case RollbackPreviousVersion: RollbackPreviousVersionNow(); break;
     case ClearUpdateTransaction: {
@@ -7044,6 +7177,7 @@ This does not clear cookies, site storage, permissions, bookmarks or downloaded 
         if(!SaveUpdateTransaction(root_,cleared,&error)){Notice(L"Update state could not be cleared. "+Wide(error));break;}
         update_transaction_=cleared;available_update_.reset();update_runtime_status_.clear();
         if(!staged_dir.empty()){std::error_code remove_error;std::filesystem::remove_all(staged_dir,remove_error);}
+        ScheduleAutomaticUpdateCheck(false);
         QueueUI(); Note(L"Staged update state cleared.");
         break;
     }
@@ -7952,6 +8086,7 @@ LRESULT BrowserApp::Impl::Message(UINT message, WPARAM wparam, LPARAM lparam) {
         }
         if (wparam == kTick) Tick();
         if (wparam == kUpdateHealth) ConfirmUpdateHealth();
+        if (wparam == kAutomaticUpdateCheck) { KillTimer(window_,kAutomaticUpdateCheck); StartUpdateCheck(true); }
         if (wparam == kSave) { KillTimer(window_, kSave); Save(false); }
         if (wparam == kToast) { KillTimer(window_, kToast); note_until_ = 0; toast_action_command_=0; toast_download_id_=0; ShowWindow(toast_, SW_HIDE); }
         return 0;
@@ -8007,6 +8142,7 @@ LRESULT BrowserApp::Impl::Message(UINT message, WPARAM wparam, LPARAM lparam) {
         closing_ = true;
         CancelTabDrag();
         KillTimer(window_, kTick); KillTimer(window_, kSave); KillTimer(window_, kUiFrame); KillTimer(window_, kToast);
+        KillTimer(window_, kAutomaticUpdateCheck);
         KillTimer(window_, kAnimationFrame); KillTimer(window_, kDownloadTick); KillTimer(window_, kUpdateHealth);
         for (auto& tab : tabs_) Release(*tab);
         environment_.Reset();

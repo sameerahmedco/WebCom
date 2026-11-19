@@ -1,4 +1,52 @@
-# WebCom v3 public-beta checklist
+# WebCom v3 public-release acceptance checklist
+
+
+## Latest-50 background update acceptance
+
+- [ ] With update checks disabled, leave WebCom open past the startup delay and confirm no release-manifest request is made.
+- [ ] Enable update checks and confirm a due background check starts after the startup delay without showing modal success/failure dialogs; leave WebCom running and verify the normal cadence is six hours.
+- [ ] Open two profile windows before the same due check and confirm only one background update network operation is active; restart repeatedly and confirm `update-automation.v1` prevents repeated startup polling.
+- [ ] Simulate transient endpoint failures: first two failures may use bounded quick retry; third and later failures must fall back to the normal six-hour cadence.
+- [ ] With automatic verified downloads **off**, publish a valid newer manifest and confirm WebCom notifies/reviews the update but does not download the installer.
+- [ ] Enable automatic verified downloads and confirm this also enables checks; a valid package may download/stage automatically only after size/SHA-256/Authenticode/product-version/publisher verification.
+- [ ] Tamper the package, hash, product version, signature, or publisher and confirm no verified staged transaction is created.
+- [ ] Confirm a background-staged installer never launches Setup automatically; installation still requires an explicit Updates-page action and preserves per-user/per-machine scope.
+- [ ] Clear or successfully finish an update transaction and confirm future background checks are scheduled again.
+- [ ] Verify v2 update settings migrate with check consent intact but automatic downloads disabled until explicitly enabled.
+
+## Latest-50 source freeze
+
+- [x] Portable GCC matrix passes **42/42** targets.
+- [x] Portable Clang matrix passes **42/42** targets.
+- [x] ASan + UBSan matrix passes **42/42** targets with leak detection.
+- [x] Bundled blocker/YouTube script tests pass **8/8**.
+- [x] Portable behavioral suites pass **1,184** explicit checks.
+- [x] Source-preflight protects the background-update, release, installer, privacy and incident pipeline (**840 checks** in this source snapshot).
+- [ ] Complete the Latest-50 Windows background-update acceptance section above on the exact signed candidate.
+
+## Latest-49 update installation scope acceptance
+
+- [ ] From a normal per-user installation, stage and install a signed newer release; confirm WebCom uses the existing per-user registration, passes `/CURRENTUSER`, and does not request unnecessary administrator elevation.
+- [ ] From a machine-wide installation, stage and install a signed newer release; confirm WebCom passes `/ALLUSERS` and Windows requests administrator approval.
+- [ ] Launch an unregistered/portable copy, stage a valid update, and confirm the Updates page reports unknown/portable scope and does not offer automatic installer launch.
+- [ ] From the previous version, schedule a verified update and cancel/exit the installer before replacement; reopen the old WebCom version and confirm the transaction returns from `install-scheduled` to `verified` with the same target/hash/size metadata.
+- [ ] Retry that staged update and confirm WebCom re-verifies size, SHA-256, Authenticode, product/version and publisher immediately before launching it again.
+- [ ] Repeat per-user/per-machine/unknown-scope behavior for the verified rollback path; automatic rollback must remain disabled.
+
+## Latest-48 final source freeze
+
+- [x] Portable GCC matrix passes **41/41** targets.
+- [x] Portable Clang matrix passes **41/41** targets.
+- [x] ASan + UBSan matrix passes **41/41** targets with leak detection.
+- [x] Bundled blocker/YouTube script tests pass **8/8**.
+- [x] Source-preflight protects the consolidated release/security/incident pipeline (**778 checks** in this source snapshot).
+- [x] Runtime process baseline, PE hardening verification, least-privilege installer defaults, safe uninstall, signed uninstaller path, dependency lock/SBOM/provenance, and public security/privacy/support/contribution policies are present in source.
+- [ ] On real Windows, build the exact signed Stable candidate with `Build-ReleaseCandidate.ps1` and archive its package/provenance/SBOM evidence.
+- [ ] Run `Test-ReleaseCandidate.ps1` **without** `-SkipMemoryGate` and **with** `-RunMachineInstall`; complete upgrade QA or the explicit first-release waiver.
+- [ ] Complete Narrator/UI Automation and 100/125/150/200% + mixed-monitor DPI acceptance on the exact candidate.
+- [ ] Choose the real public publisher identity, product/repository/support/security/privacy/release-notes HTTPS URLs, and OpenSource vs Proprietary distribution terms.
+- [ ] Run `Approve-PublicRelease.ps1`; archive `PUBLIC-RELEASE.json`, its `.sha256`, and `PUBLIC-RELEASE-SHA256SUMS.txt`. Only then mark the binary public/stable.
+
 
 - [ ] Fresh MSVC `build.cmd` succeeds after source preflight.
 - [ ] `WebCom.exe` and the native UI test harness link successfully.
@@ -30,7 +78,7 @@
 - [ ] One-tab memory is measured after warmup and compared with the current release budget using `scripts/Measure-WebComMemory.ps1 -Scenario one-tab`; retain both CSV and JSON artifacts.
 - [ ] Multi-tab, sleeping-tab, split-view, and multi-profile memory scenarios are recorded with the same Windows/WebView2/site/extension conditions and reviewed using average/median/p95/peak rather than a single sample.
 - [ ] Shift+Esc Performance snapshot includes WebCom-host and WebView2-group memory separately plus current tabs/sleep/workspaces/sleep policy, and clearly labels partial/incomplete process reads.
-- [ ] Update checks/downloads/installs/rollback remain explicit and user-controlled.
+- [ ] Update endpoint contact and verified package download occur only according to the saved opt-in settings; installer launch and rollback remain explicit and user-controlled.
 
 - [ ] New Tab custom shortcuts persist per profile, reject unsafe/non-web URLs, enforce the eight-shortcut limit, and remove without affecting bookmarks/history.
 - [ ] Recent-site **Pin** creates a custom shortcut and **Hide** removes the host from New Tab without deleting History; hidden hosts remain hidden after restart.
@@ -98,7 +146,17 @@
 - [ ] Confirm `webcom-fresh-install-v2` launches the **installed signed browser**, observes WebView2, verifies version/Default Apps registration, then silently uninstalls and removes WebCom ProgIDs/RegisteredApplications entries.
 - [ ] When a previous signed package exists, pass it as `-PreviousInstaller`; require the upgrade gate to preserve the isolated `state.v1` across installer replacement, launch both previous/current browsers against that profile, and clean registrations after uninstall. If no prior signed build has ever existed, pass `-NoPreviousSignedBuild` explicitly; the gate must never skip upgrade QA silently.
 - [ ] Archive `release-candidate.json` plus every referenced component report and verify their SHA-256 values before approving the signed build.
-- [ ] Do not publish merely because `Build-PublicBeta.ps1` produced signed artifacts; publication requires the Release Candidate gate to pass on real Windows.
+- [ ] Do not publish merely because `Build-ReleaseCandidate.ps1` produced signed artifacts; publication requires the Release Candidate gate to pass on real Windows.
+
+
+## Latest-45 supply-chain acceptance
+
+- [ ] `dependencies.lock.json` is covered by the source hash manifest and pins exactly `Microsoft.Web.WebView2` `1.0.4314.35` to the official NuGet HTTPS source.
+- [ ] Public-beta generation runs with `-RequireVerifiedDependencies`; official NuGet catalog SHA-512 retrieval succeeds and the downloaded package hash matches exactly.
+- [ ] Staged package verification reports `officialHashVerified=true` and the packaged dependency lock matches the source lock SHA-256.
+- [ ] `release-provenance.json` and `webcom.spdx.json` are produced beside the signed installer and release manifest.
+- [ ] The RC gate passes the provenance source-manifest, dependency-lock, signed-dist, installer, release-manifest, and SBOM hash comparisons.
+- [ ] Archive the SPDX SBOM and provenance report with the other candidate evidence; do not treat generation alone as release approval.
 
 ## Latest-44 package-integrity acceptance
 
@@ -109,4 +167,24 @@
 - [ ] Intentionally add an unmanifested source file or alter a manifested source file and confirm package verification fails; restore the clean source before release.
 - [ ] Intentionally place a PDB/OBJ/LIB/ILK artifact in the staged package and confirm verification fails.
 - [ ] Do not publish `dist\WebCom-v3-Windows-*.zip` as the public release artifact; use the signed installer that passes the RC gate.
+
+## Latest-48 incident withdrawal and recovery
+
+- [ ] Preserve `PUBLIC-RELEASE.json`, the exact signed installer/Stable manifest, release evidence, RC reports, and published-health evidence before changing public hosting.
+- [ ] For a last-known-good restore, run `scripts/Test-RollbackCandidate.ps1`; require the target to be an older approved Stable release, hash-identical to its prior approval, Authenticode-valid, and signed by the same pinned publisher certificate.
+- [ ] Use `scripts/Prepare-ReleaseWithdrawal.ps1 -Mode WithdrawOnly` to prepare evidence/manual instructions when the affected release should simply be withdrawn.
+- [ ] Use `-Mode RestoreLastKnownGood` only after rollback-candidate validation; publish the staged previous manifest/installer manually and then rerun the published-release health check against the previous approval.
+- [ ] Do not expect an older Stable manifest to downgrade clients already running the affected newer release; use WebCom's verified user-triggered rollback where available or issue a higher-version hotfix through the full RC → approval → publication-health chain.
+- [ ] Archive `RELEASE-WITHDRAWAL.json`, `INCIDENT-EVIDENCE.json`, their checksums, and the incident ZIP. Confirm the tooling reports `publicationPerformed=false`.
+- [ ] For signing-key/dependency compromise, withdraw the endpoint, preserve evidence, follow `SECURITY.md`, rotate/revoke credentials as appropriate, and never weaken publisher/version verification to force recovery.
+
+## Latest-47 release ceremony and live publication
+
+- [ ] Prefer the elevated `scripts/Invoke-PublicRelease.ps1` workflow so build, real-Windows RC, machine-install acceptance, memory budget, upgrade/first-release policy, promotion, and evidence archive all refer to one exact candidate.
+- [ ] Archive `PUBLIC-RELEASE-RUN.json`, `PUBLIC-RELEASE.json`, their SHA-256 files, and `WebCom-<version>-public-release-evidence.zip`.
+- [ ] Publish artifacts manually; the release scripts must never upload on their own.
+- [ ] Immediately run `scripts/Test-PublishedRelease.ps1` against the live Stable manifest.
+- [ ] Require the live manifest and installer to hash-match the local approval, keep valid Authenticode/publisher identity, and remain on HTTPS without downgrade redirects.
+- [ ] Require product, repository, support, security, privacy, and release-notes URLs to be reachable; archive `published-release-health.json` and its `.sha256`.
+- [ ] If live verification fails, restore/withdraw the approved artifact rather than silently replacing it; any new binary must restart the RC → approval → publication-health chain.
 

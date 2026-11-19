@@ -96,6 +96,17 @@ if(BUILD_TESTING)
     set_target_properties(webcom_tab_search_tests PROPERTIES CXX_EXTENSIONS OFF)
     add_test(NAME webcom_tab_search_tests COMMAND webcom_tab_search_tests)
 
+    add_executable(webcom_security_baseline_model_tests tests/security_baseline_model_tests.cpp src/security_baseline_model.cpp)
+    target_include_directories(webcom_security_baseline_model_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_compile_features(webcom_security_baseline_model_tests PRIVATE cxx_std_20)
+    set_target_properties(webcom_security_baseline_model_tests PROPERTIES CXX_EXTENSIONS OFF)
+    if(MSVC)
+        target_compile_options(webcom_security_baseline_model_tests PRIVATE /W4 /permissive- /utf-8 /EHsc)
+    else()
+        target_compile_options(webcom_security_baseline_model_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME webcom_security_baseline_model_tests COMMAND webcom_security_baseline_model_tests)
+
     add_executable(webcom_accessibility_model_tests tests/accessibility_model_tests.cpp src/accessibility_model.cpp)
     target_include_directories(webcom_accessibility_model_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_compile_features(webcom_accessibility_model_tests PRIVATE cxx_std_20)
@@ -369,6 +380,17 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME webcom_update_recovery_model_tests COMMAND webcom_update_recovery_model_tests)
 
+    add_executable(webcom_update_automation_model_tests tests/update_automation_model_tests.cpp src/update_automation_model.cpp)
+    target_include_directories(webcom_update_automation_model_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_compile_features(webcom_update_automation_model_tests PRIVATE cxx_std_20)
+    set_target_properties(webcom_update_automation_model_tests PROPERTIES CXX_EXTENSIONS OFF)
+    if(MSVC)
+        target_compile_options(webcom_update_automation_model_tests PRIVATE /W4 /permissive- /utf-8 /EHsc)
+    else()
+        target_compile_options(webcom_update_automation_model_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME webcom_update_automation_model_tests COMMAND webcom_update_automation_model_tests)
+
     add_executable(webcom_update_retry_model_tests tests/update_retry_model_tests.cpp src/update_retry_model.cpp)
     target_include_directories(webcom_update_retry_model_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_compile_features(webcom_update_retry_model_tests PRIVATE cxx_std_20)
@@ -505,8 +527,8 @@ if(WEBCOM_BUILD_APP)
         IMPORTED_LOCATION "${WEBCOM_LOADER_DIR}/WebView2Loader.dll")
 
     set(WEBCOM_NATIVE_SOURCES
-        src/app.cpp src/storage.cpp src/bookmarks.cpp src/appearance.cpp src/accessibility_model.cpp src/native_accessibility_model.cpp src/dark_menu.cpp
-        src/tab_search.cpp src/tab_search_model.cpp src/tab_batch_model.cpp src/omnibox_model.cpp src/history_model.cpp src/home_model.cpp src/home_preferences.cpp src/performance_preferences.cpp src/ad_blocker_preferences.cpp src/download_history_model.cpp src/recently_closed_model.cpp src/site_permissions.cpp src/saved_sessions.cpp src/reader_model.cpp src/capture_model.cpp src/selection_capture_model.cpp src/external_protocol.cpp src/profile_template.cpp src/startup_model.cpp src/update_model.cpp src/update_runtime_model.cpp src/update_retry_model.cpp src/reliability_report_model.cpp src/update_recovery_model.cpp src/runtime_log.cpp src/update_transport_win32.cpp src/extension_model.cpp src/extension_view_model.cpp src/extension_sources.cpp src/onboarding_model.cpp src/diagnostics_model.cpp src/memory_snapshot_model.cpp src/diagnostics_bundle.cpp src/annotation_editor.cpp src/windows_header_smoke.cpp resources/webcom.rc)
+        src/app.cpp src/storage.cpp src/bookmarks.cpp src/appearance.cpp src/accessibility_model.cpp src/native_accessibility_model.cpp src/security_baseline_model.cpp src/security_bootstrap_win32.cpp src/dark_menu.cpp
+        src/tab_search.cpp src/tab_search_model.cpp src/tab_batch_model.cpp src/omnibox_model.cpp src/history_model.cpp src/home_model.cpp src/home_preferences.cpp src/performance_preferences.cpp src/ad_blocker_preferences.cpp src/download_history_model.cpp src/recently_closed_model.cpp src/site_permissions.cpp src/saved_sessions.cpp src/reader_model.cpp src/capture_model.cpp src/selection_capture_model.cpp src/external_protocol.cpp src/profile_template.cpp src/startup_model.cpp src/update_model.cpp src/update_runtime_model.cpp src/update_retry_model.cpp src/update_automation_model.cpp src/reliability_report_model.cpp src/update_recovery_model.cpp src/runtime_log.cpp src/update_transport_win32.cpp src/extension_model.cpp src/extension_view_model.cpp src/extension_sources.cpp src/onboarding_model.cpp src/diagnostics_model.cpp src/memory_snapshot_model.cpp src/diagnostics_bundle.cpp src/annotation_editor.cpp src/windows_header_smoke.cpp resources/webcom.rc)
 
     function(webcom_configure_native_target target_name)
         target_compile_features(${target_name} PRIVATE cxx_std_20)
@@ -520,11 +542,11 @@ if(WEBCOM_BUILD_APP)
             UNICODE _UNICODE NOMINMAX
             WINVER=0x0A00 _WIN32_WINNT=0x0A00)
         target_compile_options(${target_name} PRIVATE
-            "$<$<COMPILE_LANGUAGE:CXX>:/W4;/permissive-;/utf-8;/EHsc;/guard:cf;/external:anglebrackets;/external:W0>")
+            "$<$<COMPILE_LANGUAGE:CXX>:/W4;/permissive-;/utf-8;/EHsc;/GS;/guard:cf;/external:anglebrackets;/external:W0>")
         if(MSVC AND WEBCOM_WARNINGS_AS_ERRORS)
             target_compile_options(${target_name} PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:/WX>")
         endif()
-        target_link_options(${target_name} PRIVATE /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA /guard:cf /MANIFEST:NO)
+        target_link_options(${target_name} PRIVATE /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA /guard:cf /CETCOMPAT /MANIFEST:NO)
         target_link_libraries(${target_name} PRIVATE webcom_core WebView2Loader
             ole32 oleaut32 oleacc shell32 shlwapi comctl32 comdlg32 dwmapi user32 gdi32 gdiplus uxtheme wininet winhttp psapi advapi32 bcrypt crypt32 wintrust version uuid)
         add_custom_command(TARGET ${target_name} POST_BUILD

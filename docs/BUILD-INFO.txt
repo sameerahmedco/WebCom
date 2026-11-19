@@ -2,17 +2,17 @@ WebCom v3 for Windows
 
 Native C++20 / Win32 browser shell using Microsoft Edge WebView2 for web rendering.
 Current machine/update version: 3.0.0.
-Portable validation: 40/40 CTest targets with GCC and 40/40 with Clang.
-Behavioral checks: 1151 passing.
+Portable validation: 42/42 CTest targets with GCC and 42/42 with Clang; 42/42 also pass under ASan+UBSan with leak detection.
+Behavioral checks: 1184 passing.
 Bundled ad-blocker/YouTube checks: 8/8 passing.
-Windows/MSVC source-preflight checks: 591 passing.
+Windows/MSVC source-preflight checks: 840 passing.
 A real Windows/MSVC/WebView2/signed-installer Release Candidate run remains required before public binary release sign-off.
-See docs/VALIDATION.md, docs/PUBLIC-BETA-CHECKLIST.md, docs/WINDOWS-ACCEPTANCE.md, docs/MEMORY-ACCEPTANCE.md, and docs/RELEASE-CANDIDATE.md.
+See docs/VALIDATION.md, docs/PUBLIC-RELEASE-CHECKLIST.md, docs/WINDOWS-ACCEPTANCE.md, docs/MEMORY-ACCEPTANCE.md, and docs/RELEASE-CANDIDATE.md.
 
 Latest-35 Windows acceptance: clean build + zero-warning gate + packaged UI replay + isolated WebView2 smoke (Windows-only).
 Latest-36 performance hardening: adaptive automatic-sleep polling + lazy Downloads/Site Permissions/Saved Sessions/unpacked-extension metadata loading + MSVC unpacked-picker compile fix.
 Latest-37 UI smoothness: destination-first WebView tab handoff + hidden startup chrome + buffered omnibox reveal + reduced-motion-safe tab/reflow/menu animation.
-Latest-38 public-beta completion: persistent Recently Closed recovery + actionable download/update notices + privacy-safe Report a Problem + honest blocker state + expanded cleanup.
+Latest-38 pre-release completion: persistent Recently Closed recovery + actionable download/update notices + privacy-safe Report a Problem + honest blocker state + expanded cleanup.
 Latest-39 Release Candidate hardening: signed fresh-install runtime QA + previous-to-current upgrade/profile-state QA + machine-readable release-matrix reporting + one-command RC aggregation.
 
 Latest-40 accessibility/DPI hardening: effective Windows/profile motion + High Contrast policy, live system-setting refresh, DPI rebuild/redraw, and keyboard focus for native internal-page actions.
@@ -23,3 +23,12 @@ Latest-42 MSVC regression hardening: field-explicit Windows UI seed profiles + n
 Latest-43 MSVC warning-clean hardening: native WebCom/UI harness use /W4 /WX by default, external angle-bracket warnings are isolated, and diagnostic warning allowance is explicit/non-release-safe.
 
 Latest-44 package-integrity hardening: PE/version/source-manifest/package-content verification, release trust metadata, pre/post-sign executable verification, and installer-to-signed-executable SHA-256 binding.
+Latest-45 supply-chain hardening: source-tracked WebView2 dependency lock + official NuGet SHA512 release verification + staged dependency evidence + SPDX 2.3 SBOM + cryptographically bound release provenance.
+
+Latest-46 public-release RC hardening: process/PE security baseline + least-privilege/safe signed installer + sanitizer CI + public security/privacy/support/community policy + canonical RC build and final PUBLIC-RELEASE promotion evidence.
+Latest-47 release operations: one-command local public-release ceremony + immutable evidence ZIP + live published-manifest/installer/HTTPS endpoint verification.
+Latest-48 incident response: approved-release rollback candidate verification + non-destructive withdrawal/last-known-good preparation + checksummed incident evidence + documented downgrade limitations.
+
+Latest-49 update-install hardening: executable-bound per-user/per-machine scope detection + CURRENTUSER/ALLUSERS launch policy + fail-closed portable installs + cancelled installer transaction recovery.
+
+Latest-50 background update hardening: opt-in persisted six-hour signed-manifest checks + separate verified automatic-download consent + bounded quick retries + multi-profile network serialization + explicit installer launch boundary.

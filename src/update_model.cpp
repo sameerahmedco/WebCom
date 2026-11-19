@@ -13,6 +13,7 @@ namespace {
 
 constexpr std::string_view kHeaderV1 = "WEBCOM_UPDATES\t1";
 constexpr std::string_view kHeaderV2 = "WEBCOM_UPDATES\t2";
+constexpr std::string_view kHeaderV3 = "WEBCOM_UPDATES\t3";
 constexpr std::string_view kTransactionHeader = "WEBCOM_UPDATE_STATE\t1";
 constexpr std::size_t kMaxFile = 64 * 1024;
 
@@ -228,6 +229,17 @@ bool MarkUpdateInstallScheduled(UpdateTransaction& state, std::string* error) {
     return true;
 }
 
+bool RevertIncompleteScheduledInstall(UpdateTransaction& state, std::string_view running_version,
+                                      std::string* error) {
+    if (state.phase != UpdateTransactionPhase::InstallScheduled)
+        return Fail(error, "Only a scheduled install can be reverted to staged state.");
+    if (running_version != state.previous_version)
+        return Fail(error, "The running WebCom version does not match the pre-update version.");
+    state.phase = UpdateTransactionPhase::VerifiedPackage;
+    state.failed_health_starts = 0;
+    return true;
+}
+
 bool MarkUpdateAwaitingHealthCheck(UpdateTransaction& state, std::string* error) {
     if (state.phase != UpdateTransactionPhase::InstallScheduled) return Fail(error, "Install must be scheduled before health checking.");
     state.phase = UpdateTransactionPhase::AwaitingHealthCheck;
@@ -343,17 +355,21 @@ UpdateSettings LoadUpdateSettings(const std::filesystem::path& root) {
         start = end + 1;
     }
     if (lines.empty()) return {};
-    const bool v1 = lines[0] == kHeaderV1; const bool v2 = lines[0] == kHeaderV2;
-    if (!v1 && !v2) return {};
-    UpdateSettings result; bool channel=false,checks=false;
+    const bool v1 = lines[0] == kHeaderV1;
+    const bool v2 = lines[0] == kHeaderV2;
+    const bool v3 = lines[0] == kHeaderV3;
+    if (!v1 && !v2 && !v3) return {};
+    UpdateSettings result; bool channel=false,checks=false,automatic_downloads=false;
     for(std::size_t i=1;i<lines.size();++i){
         const auto tab=lines[i].find('\t'); if(tab==std::string::npos)return {};
         const auto key=std::string_view(lines[i]).substr(0,tab); const auto value=std::string_view(lines[i]).substr(tab+1);
         if(key=="channel"&&!channel){const auto parsed=ParseReleaseChannel(value);if(!parsed)return {};result.channel=*parsed;channel=true;}
-        else if(v2&&key=="checks_enabled"&&!checks){if(value=="1")result.checks_enabled=true;else if(value=="0")result.checks_enabled=false;else return {};checks=true;}
+        else if((v2||v3)&&key=="checks_enabled"&&!checks){if(value=="1")result.checks_enabled=true;else if(value=="0")result.checks_enabled=false;else return {};checks=true;}
+        else if(v3&&key=="automatic_downloads"&&!automatic_downloads){if(value=="1")result.automatic_downloads=true;else if(value=="0")result.automatic_downloads=false;else return {};automatic_downloads=true;}
         else return {};
     }
-    if(!channel || (v2&&!checks)) return {};
+    if(!channel || ((v2||v3)&&!checks) || (v3&&!automatic_downloads)) return {};
+    if(!result.checks_enabled) result.automatic_downloads=false;
     return result;
 }
 
@@ -366,8 +382,9 @@ bool SaveUpdateSettings(const std::filesystem::path& root, const UpdateSettings&
     {
         std::ofstream output(temp, std::ios::binary | std::ios::trunc);
         if (!output) return Fail(error, "Could not write update settings.");
-        output << kHeaderV2 << "\nchannel\t" << ReleaseChannelName(settings.channel)
-               << "\nchecks_enabled\t" << (settings.checks_enabled ? "1" : "0") << "\n";
+        output << kHeaderV3 << "\nchannel\t" << ReleaseChannelName(settings.channel)
+               << "\nchecks_enabled\t" << (settings.checks_enabled ? "1" : "0")
+               << "\nautomatic_downloads\t" << (settings.checks_enabled && settings.automatic_downloads ? "1" : "0") << "\n";
         if (!output) return Fail(error, "Could not finish update settings.");
     }
     std::filesystem::rename(temp, path, ec);

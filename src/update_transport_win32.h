@@ -3,6 +3,7 @@
 #ifdef _WIN32
 
 #include "update_model.h"
+#include "update_runtime_model.h"
 
 #include <filesystem>
 #include <optional>
@@ -10,6 +11,8 @@
 #include <string_view>
 
 namespace webcom {
+
+UpdateInstallScope DetectCurrentUpdateInstallScope();
 
 std::optional<std::string> FetchUpdateManifestHttps(std::string_view url,
                                                     std::size_t maximum_bytes,

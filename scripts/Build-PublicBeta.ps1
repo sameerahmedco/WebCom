@@ -10,9 +10,9 @@ param(
     [string]$OutputDir = 'release'
 )
 $ErrorActionPreference = 'Stop'
-function Fail([string]$Message) { throw "WebCom public-beta build failed: $Message" }
+function Fail([string]$Message) { throw "WebCom Release Candidate build failed: $Message" }
 if ($Version -notmatch '^\d{1,4}\.\d{1,4}\.\d{1,4}(-[A-Za-z0-9.-]{1,24})?$') { Fail 'invalid semantic version' }
-if ($Channel -eq 'stable' -and $Version -match '-') { Fail 'stable public-beta build cannot use a prerelease version' }
+if ($Channel -eq 'stable' -and $Version -match '-') { Fail 'stable Release Candidate build cannot use a prerelease version' }
 if ($StableManifestUrl -notmatch '^https://\S+$') { Fail 'StableManifestUrl must be HTTPS' }
 if ($BetaManifestUrl -and $BetaManifestUrl -notmatch '^https://\S+$') { Fail 'BetaManifestUrl must be HTTPS' }
 if ($PackageUrl -notmatch '^https://\S+$') { Fail 'PackageUrl must be HTTPS' }
@@ -20,7 +20,7 @@ if ($PublisherSha256 -notmatch '^[0-9A-Fa-f]{64}$') { Fail 'PublisherSha256 must
 
 $root = Split-Path -Parent $PSScriptRoot
 & (Join-Path $PSScriptRoot 'Build.ps1') -Configuration Release -Architecture x64 `
-    -StableManifestUrl $StableManifestUrl -BetaManifestUrl $BetaManifestUrl -PublisherSha256 $PublisherSha256
+    -StableManifestUrl $StableManifestUrl -BetaManifestUrl $BetaManifestUrl -PublisherSha256 $PublisherSha256 -RequireVerifiedDependencies
 if ($LASTEXITCODE -ne 0) { Fail "browser build exited with $LASTEXITCODE" }
 
 $dist = Join-Path $root 'dist\WebCom'
@@ -39,9 +39,16 @@ $manifest = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $manifestRel
 if ($LASTEXITCODE -ne 0) { Fail "release manifest generation exited with $LASTEXITCODE" }
 & (Join-Path $PSScriptRoot 'Verify-UpdatePackage.ps1') -Manifest $manifest -Package $installer
 if ($LASTEXITCODE -ne 0) { Fail "release package verification exited with $LASTEXITCODE" }
+$provenanceScript = Join-Path $PSScriptRoot 'New-ReleaseProvenance.ps1'
+& $provenanceScript -Installer $installer -Manifest $manifest -SignedDistReport $signedDistReport -RepositoryRoot $root -OutputDir $OutputDir
+if ($LASTEXITCODE -ne 0) { Fail "release provenance generation exited with $LASTEXITCODE" }
+$provenance = Join-Path ([System.IO.Path]::GetFullPath((Join-Path (Get-Location) $OutputDir))) 'release-provenance.json'
+$sbom = Join-Path ([System.IO.Path]::GetFullPath((Join-Path (Get-Location) $OutputDir))) 'webcom.spdx.json'
 
-Write-Host 'WebCom public-beta release artifacts are ready.' -ForegroundColor Green
+Write-Host 'WebCom signed Release Candidate artifacts are ready.' -ForegroundColor Green
 Write-Host "Installer: $installer"
 Write-Host "Manifest:  $manifest"
 Write-Host "Build verification: $signedDistReport"
+Write-Host "Provenance: $provenance"
+Write-Host "SPDX SBOM:  $sbom"
 Write-Host 'Do not publish yet. Run scripts\Test-ReleaseCandidate.ps1 against the signed installer/manifest and publish only after that gate passes.'
